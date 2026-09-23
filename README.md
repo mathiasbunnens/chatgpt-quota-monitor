@@ -2,6 +2,8 @@
 
 Widget macOS natif qui affiche le quota Codex restant directement dans la barre des menus pour un abonnement ChatGPT Plus.
 
+<img width="640" height="710" alt="Capture d’écran 2026-09-23 à 23 36 38 2" src="https://github.com/user-attachments/assets/5def5240-3c0b-42b2-ba33-d31215adbf63" />
+
 Un clic sur la mascotte ouvre un menu compact avec :
 
 - la limite glissante de 5 heures ;
