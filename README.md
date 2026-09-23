@@ -1,6 +1,6 @@
 # Quota Codex
 
-Widget macOS natif qui affiche le quota Codex restant directement dans la barre des menus.
+Widget macOS natif qui affiche le quota Codex restant directement dans la barre des menus pour un abonnement ChatGPT Plus.
 
 Un clic sur la mascotte ouvre un menu compact avec :
 
@@ -13,7 +13,7 @@ L’application ne lit ni mot de passe, ni cookie, ni token. Une petite extensio
 
 ## Installation rapide
 
-1. Télécharge `Quota.Codex_1.0.0_universal.dmg` et `quota-codex-extension-1.0.0.zip` depuis la [dernière release GitHub](../../releases/latest).
+1. Télécharge **Quota Codex** depuis la [dernière release GitHub](../../releases/latest).
 2. Ouvre le fichier `.dmg`, puis glisse **Quota Codex** dans **Applications**.
 3. Décompresse l’archive de l’extension dans un dossier que tu conserveras.
 4. Dans Chrome, Brave, Edge ou Arc, ouvre la page des extensions, active le **Mode développeur**, puis choisis **Charger l’extension non empaquetée** et sélectionne le dossier `extension` décompressé.
@@ -23,9 +23,7 @@ Les valeurs apparaissent ensuite dans la barre des menus et sont actualisées au
 
 ## Mises à jour
 
-Quota Codex vérifie les nouvelles releases GitHub au démarrage. Une entrée **Vérifier les mises à jour…** est également disponible dans le menu de la barre des menus. Les mises à jour sont signées, téléchargées puis installées automatiquement avant le redémarrage de l’application.
-
-Pour activer la publication des mises à jour signées dans GitHub Actions, configure les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. La clé privée ne doit jamais être commitée ; la clé publique est intégrée dans `src-tauri/tauri.conf.json`.
+Quota Codex vérifie les nouvelles releases GitHub au démarrage. Les mises à jour sont signées, téléchargées puis installées automatiquement avant le redémarrage de l’application.
 
 > La première version distribuée n’est pas signée avec un certificat Apple. Si macOS bloque son lancement, fais un clic droit sur **Quota Codex** dans Applications, choisis **Ouvrir**, puis confirme une seconde fois.
 
