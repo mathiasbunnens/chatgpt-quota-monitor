@@ -13,7 +13,7 @@ L’application ne lit ni mot de passe, ni cookie, ni token. Une petite extensio
 
 ## Installation rapide
 
-1. Télécharge `Quota Codex_1.0.0_universal.dmg` et `quota-codex-extension-1.0.0.zip` depuis la [dernière release GitHub](../../releases/latest).
+1. Télécharge `Quota.Codex_1.0.0_universal.dmg` et `quota-codex-extension-1.0.0.zip` depuis la [dernière release GitHub](../../releases/latest).
 2. Ouvre le fichier `.dmg`, puis glisse **Quota Codex** dans **Applications**.
 3. Décompresse l’archive de l’extension dans un dossier que tu conserveras.
 4. Dans Chrome, Brave, Edge ou Arc, ouvre la page des extensions, active le **Mode développeur**, puis choisis **Charger l’extension non empaquetée** et sélectionne le dossier `extension` décompressé.

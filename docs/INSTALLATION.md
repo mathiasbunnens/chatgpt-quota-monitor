@@ -11,7 +11,7 @@ L’un ne peut pas recevoir les données sans l’autre.
 
 Dans la section **Releases** du dépôt GitHub, ouvre la dernière version et télécharge :
 
-- `Quota Codex_1.0.0_universal.dmg` ;
+- `Quota.Codex_1.0.0_universal.dmg` ;
 - `quota-codex-extension-1.0.0.zip`.
 
 Le fichier `universal` fonctionne sur les Mac Apple Silicon et Intel.
