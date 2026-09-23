@@ -1,0 +1,36 @@
+@use "variables" as *;
+
+:root {
+  color: $color-ink;
+  background: #f5eee8;
+  font-family: $font-body;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 0;
+  min-height: 100vh;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid rgba(233, 116, 81, 0.35);
+  outline-offset: 3px;
+}

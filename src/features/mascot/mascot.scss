@@ -1,0 +1,74 @@
+@use "../../styles/variables" as *;
+
+.mascot {
+  position: relative;
+  width: 7rem;
+  height: 8rem;
+  margin: 0 auto;
+  filter: drop-shadow(0 1rem 1rem rgba(76, 45, 67, 0.14));
+
+  &__antenna {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 0.35rem;
+    height: 2rem;
+    border-radius: 1rem;
+    background: $color-ink;
+    transform: translateX(-50%);
+
+    &::after {
+      position: absolute;
+      top: -0.55rem;
+      left: 50%;
+      width: 1rem;
+      height: 1rem;
+      border-radius: 50%;
+      background: $color-accent;
+      content: "";
+      transform: translateX(-50%);
+    }
+  }
+
+  &__face {
+    position: absolute;
+    top: 1.35rem;
+    left: 50%;
+    display: flex;
+    width: 6rem;
+    height: 4.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2rem;
+    border: 0.35rem solid $color-ink;
+    border-radius: 45% 45% 40% 40%;
+    background: $color-lilac;
+    transform: translateX(-50%) rotate(-3deg);
+  }
+
+  &__eye {
+    width: 0.65rem;
+    height: 1rem;
+    border-radius: 50%;
+    background: $color-ink;
+  }
+
+  &__body {
+    position: absolute;
+    right: 0.65rem;
+    bottom: 0;
+    left: 0.65rem;
+    height: 3rem;
+    border-radius: 50% 50% 1.5rem 1.5rem;
+    background: $color-accent;
+    transform: rotate(2deg);
+  }
+
+  &--attentif &__body {
+    background: #e7b34b;
+  }
+
+  &--alerte &__body {
+    background: $color-accent-dark;
+  }
+}

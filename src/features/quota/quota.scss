@@ -1,0 +1,66 @@
+@use "../../styles/variables" as *;
+@use "../../styles/mixins" as *;
+
+.quota-card {
+  @include panel;
+  padding: 1rem 1.15rem;
+
+  &__heading,
+  &__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  &__eyebrow {
+    margin: 0 0 0.25rem;
+    color: $color-muted;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  h2 {
+    margin: 0;
+    font-family: $font-display;
+    font-size: 2rem;
+    line-height: 1;
+
+    span {
+      color: $color-muted;
+      font-family: $font-body;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+  }
+
+  &__percentage {
+    color: $color-accent-dark;
+    font-size: 0.85rem;
+    font-weight: 800;
+  }
+
+  &__progress {
+    height: 0.45rem;
+    margin: 0.9rem 0 0.75rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #eee5df;
+
+    span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, $color-accent-dark, $color-accent);
+      transition: width 300ms ease;
+    }
+  }
+
+  &__footer {
+    color: $color-muted;
+    font-size: 0.72rem;
+  }
+
+}

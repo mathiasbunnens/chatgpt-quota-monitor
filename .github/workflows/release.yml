@@ -1,0 +1,55 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Package browser extension
+        run: ditto -c -k --sequesterRsrc --keepParent extension quota-codex-extension-${GITHUB_REF_NAME#v}.zip
+
+      - name: Build and publish universal macOS release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Quota Codex ${{ github.ref_name }}
+          releaseBody: |
+            Widget macOS natif pour surveiller les quotas Codex.
+
+            Consultez le guide d’installation inclus dans le dépôt avant le premier lancement.
+          releaseDraft: false
+          prerelease: false
+          args: --target universal-apple-darwin
+          includeUpdaterJson: false
+
+      - name: Attach browser extension
+        uses: softprops/action-gh-release@v2
+        with:
+          files: quota-codex-extension-*.zip

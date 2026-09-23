@@ -1,0 +1,13 @@
+@use "variables" as *;
+
+@mixin panel {
+  border: 1px solid $color-border;
+  border-radius: $radius-card;
+  background: $color-surface-strong;
+  box-shadow: 0 1rem 3rem rgba(76, 45, 67, 0.08);
+}
+
+@mixin focus-ring {
+  outline: 3px solid rgba(233, 116, 81, 0.35);
+  outline-offset: 3px;
+}
