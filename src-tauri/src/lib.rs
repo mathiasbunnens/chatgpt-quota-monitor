@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, OnceLock,
     },
 };
@@ -19,8 +19,9 @@ use objc2::{
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu, NSMenuDelegate, NSMenuItem,
-    NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView, NSWorkspace,
+    NSAlert, NSAlertStyle, NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu,
+    NSMenuDelegate, NSMenuItem, NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView,
+    NSWorkspace,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
@@ -56,32 +57,159 @@ fn browser_source() -> String {
 struct QuotaState(Mutex<HashMap<String, BrowserQuotaPayload>>);
 
 static REFRESH_TOKEN: AtomicU64 = AtomicU64::new(0);
+static UPDATE_CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-async fn check_and_install_update(app: tauri::AppHandle) {
+#[cfg_attr(debug_assertions, allow(dead_code))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdateCheckMode {
+    Automatic,
+    Interactive,
+}
+
+struct UpdateCheckGuard;
+
+impl Drop for UpdateCheckGuard {
+    fn drop(&mut self) {
+        UPDATE_CHECK_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn show_update_alert(
+    app: &tauri::AppHandle,
+    title: impl Into<String>,
+    message: impl Into<String>,
+    button: impl Into<String>,
+    is_error: bool,
+) {
+    let title = title.into();
+    let message = message.into();
+    let button = button.into();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+
+    if let Err(error) = app.run_on_main_thread(move || {
+        let mtm = MainThreadMarker::new().expect("update alert must run on the main thread");
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(&title));
+        alert.setInformativeText(&NSString::from_str(&message));
+        alert.setAlertStyle(if is_error {
+            NSAlertStyle::Warning
+        } else {
+            NSAlertStyle::Informational
+        });
+        alert.addButtonWithTitle(&NSString::from_str(&button));
+        NSApplication::sharedApplication(mtm).activate();
+        alert.runModal();
+        let _ = sender.send(());
+    }) {
+        eprintln!("Quota Codex could not display update alert: {error}");
+        return;
+    }
+
+    let _ = tauri::async_runtime::spawn_blocking(move || receiver.recv()).await;
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn show_update_alert(
+    _app: &tauri::AppHandle,
+    title: impl Into<String>,
+    message: impl Into<String>,
+    _button: impl Into<String>,
+    _is_error: bool,
+) {
+    eprintln!("{}: {}", title.into(), message.into());
+}
+
+async fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error: impl ToString) {
+    let error = error.to_string();
+    eprintln!("Quota Codex update failed: {error}");
+    if mode == UpdateCheckMode::Interactive {
+        show_update_alert(
+            app,
+            "Impossible de mettre Quota Codex à jour",
+            format!("Vérifie ta connexion Internet puis réessaie.\n\nDétail : {error}"),
+            "OK",
+            true,
+        )
+        .await;
+    }
+}
+
+async fn check_and_install_update(app: tauri::AppHandle, mode: UpdateCheckMode) {
     use tauri_plugin_updater::UpdaterExt;
+
+    if UPDATE_CHECK_IN_PROGRESS.swap(true, Ordering::AcqRel) {
+        if mode == UpdateCheckMode::Interactive {
+            show_update_alert(
+                &app,
+                "Vérification déjà en cours",
+                "Quota Codex vérifie ou installe déjà une mise à jour.",
+                "OK",
+                false,
+            )
+            .await;
+        }
+        return;
+    }
+    let _guard = UpdateCheckGuard;
+    let current_version = app.package_info().version.to_string();
 
     let update = match app.updater() {
         Ok(updater) => updater.check().await,
         Err(error) => {
-            eprintln!("Quota Codex updater initialization failed: {error}");
+            show_update_error(&app, mode, error).await;
             return;
         }
     };
 
     match update {
         Ok(Some(update)) => {
+            let next_version = update.version.clone();
+            if mode == UpdateCheckMode::Interactive {
+                show_update_alert(
+                    &app,
+                    "Mise à jour disponible",
+                    format!(
+                        "La version {current_version} est installée. Quota Codex v{next_version} va être téléchargé et installé. Une confirmation apparaîtra lorsque l’installation sera terminée."
+                    ),
+                    "Installer",
+                    false,
+                )
+                .await;
+            }
+
             let result = update
                 .download_and_install(|_chunk_length, _content_length| {}, || {})
                 .await;
             if let Err(error) = result {
-                eprintln!("Quota Codex update failed: {error}");
+                show_update_error(&app, mode, error).await;
             } else {
+                show_update_alert(
+                    &app,
+                    "Mise à jour installée",
+                    format!(
+                        "La version {next_version} a été installée. Quota Codex va maintenant redémarrer."
+                    ),
+                    "Redémarrer",
+                    false,
+                )
+                .await;
                 app.restart();
             }
         }
+        Ok(None) if mode == UpdateCheckMode::Interactive => {
+            show_update_alert(
+                &app,
+                "Quota Codex est à jour",
+                format!("La version {current_version} est la dernière version disponible."),
+                "OK",
+                false,
+            )
+            .await;
+        }
         Ok(None) => {}
-        Err(error) => eprintln!("Quota Codex update check failed: {error}"),
+        Err(error) => show_update_error(&app, mode, error).await,
     }
 }
 
@@ -133,7 +261,10 @@ define_class!(
         #[unsafe(method(checkForUpdates:))]
         fn check_for_updates(&self, _sender: Option<&AnyObject>) {
             if let Some(app) = APP_HANDLE.get().cloned() {
-                tauri::async_runtime::spawn(check_and_install_update(app));
+                tauri::async_runtime::spawn(check_and_install_update(
+                    app,
+                    UpdateCheckMode::Interactive,
+                ));
             }
         }
     }
@@ -470,7 +601,10 @@ pub fn run() {
             let _ = APP_HANDLE.set(app.handle().clone());
 
             #[cfg(not(debug_assertions))]
-            tauri::async_runtime::spawn(check_and_install_update(app.handle().clone()));
+            tauri::async_runtime::spawn(check_and_install_update(
+                app.handle().clone(),
+                UpdateCheckMode::Automatic,
+            ));
 
             #[cfg(target_os = "macos")]
             app.handle()

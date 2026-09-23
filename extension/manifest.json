@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Quota Codex bridge",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Prépare les informations visibles de ChatGPT pour Quota Codex.",
   "permissions": ["alarms", "storage"],
   "host_permissions": [
