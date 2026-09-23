@@ -1,7 +1,13 @@
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Mutex};
-use tauri::{Manager, State};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
+};
+use tauri::{Emitter, Manager, State};
 use tiny_http::{Header, Method, Response, Server};
 
 #[cfg(target_os = "macos")]
@@ -44,6 +50,36 @@ fn browser_source() -> String {
 #[derive(Default)]
 struct QuotaState(Mutex<HashMap<String, BrowserQuotaPayload>>);
 
+static REFRESH_TOKEN: AtomicU64 = AtomicU64::new(0);
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+async fn check_and_install_update(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let update = match app.updater() {
+        Ok(updater) => updater.check().await,
+        Err(error) => {
+            eprintln!("Quota Codex updater initialization failed: {error}");
+            return;
+        }
+    };
+
+    match update {
+        Ok(Some(update)) => {
+            let result = update
+                .download_and_install(|_chunk_length, _content_length| {}, || {})
+                .await;
+            if let Err(error) = result {
+                eprintln!("Quota Codex update failed: {error}");
+            } else {
+                app.restart();
+            }
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!("Quota Codex update check failed: {error}"),
+    }
+}
+
 #[derive(Clone, Copy)]
 #[cfg(target_os = "macos")]
 struct QuotaViewHandles {
@@ -81,6 +117,18 @@ define_class!(
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
         }
+
+        #[unsafe(method(refresh:))]
+        fn refresh(&self, _sender: Option<&AnyObject>) {
+            REFRESH_TOKEN.fetch_add(1, Ordering::Relaxed);
+        }
+
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = APP_HANDLE.get().cloned() {
+                tauri::async_runtime::spawn(check_and_install_update(app));
+            }
+        }
     }
 );
 
@@ -104,6 +152,11 @@ fn get_quota_snapshots(state: State<'_, QuotaState>) -> Vec<BrowserQuotaPayload>
         .lock()
         .map(|snapshots| snapshots.values().cloned().collect())
         .unwrap_or_default()
+}
+
+#[tauri::command]
+fn request_quota_refresh() -> u64 {
+    REFRESH_TOKEN.fetch_add(1, Ordering::Relaxed) + 1
 }
 
 fn reset_label(payload: &BrowserQuotaPayload) -> String {
@@ -241,6 +294,24 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let target = QuotaMenuTarget::new(mtm);
+
+    let refresh = NSMenuItem::new(mtm);
+    refresh.setTitle(&NSString::from_str("Recharger"));
+    unsafe {
+        refresh.setTarget(Some(&target));
+        refresh.setAction(Some(objc2::sel!(refresh:)));
+    }
+    menu.addItem(&refresh);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+    let check_updates = NSMenuItem::new(mtm);
+    check_updates.setTitle(&NSString::from_str("Vérifier les mises à jour…"));
+    unsafe {
+        check_updates.setTarget(Some(&target));
+        check_updates.setAction(Some(objc2::sel!(checkForUpdates:)));
+    }
+    menu.addItem(&check_updates);
+
     let open_usage = NSMenuItem::new(mtm);
     open_usage.setTitle(&NSString::from_str("Ouvrir la page d’utilisation…"));
     unsafe {
@@ -315,6 +386,17 @@ fn start_browser_bridge(app: tauri::AppHandle) {
                 continue;
             }
 
+            if request.method() == &Method::Get && request.url() == "/refresh" {
+                let refresh_token = REFRESH_TOKEN.load(Ordering::Relaxed);
+                let response = Response::from_string(
+                    serde_json::json!({ "refreshToken": refresh_token }).to_string(),
+                )
+                .with_header(cors)
+                .with_header(content_type);
+                let _ = request.respond(response);
+                continue;
+            }
+
             if request.method() != &Method::Post || request.url() != "/quota" {
                 let response = Response::from_string("Not found")
                     .with_status_code(404)
@@ -336,6 +418,7 @@ fn start_browser_bridge(app: tauri::AppHandle) {
                 }
 
                 update_native_menu(&app, &payload);
+                let _ = app.emit("quota-updated", &payload);
                 let response = Response::from_string("{\"ok\":true}")
                     .with_header(cors)
                     .with_header(content_type);
@@ -355,10 +438,20 @@ fn start_browser_bridge(app: tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(QuotaState::default())
         .manage(NativeMenuState::default())
-        .invoke_handler(tauri::generate_handler![get_platform, get_quota_snapshots])
+        .invoke_handler(tauri::generate_handler![
+            get_platform,
+            get_quota_snapshots,
+            request_quota_refresh
+        ])
         .setup(|app| {
+            let _ = APP_HANDLE.set(app.handle().clone());
+
+            #[cfg(not(debug_assertions))]
+            tauri::async_runtime::spawn(check_and_install_update(app.handle().clone()));
+
             #[cfg(target_os = "macos")]
             app.handle()
                 .set_activation_policy(tauri::ActivationPolicy::Accessory)?;

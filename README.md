@@ -21,6 +21,12 @@ L’application ne lit ni mot de passe, ni cookie, ni token. Une petite extensio
 
 Les valeurs apparaissent ensuite dans la barre des menus et sont actualisées automatiquement.
 
+## Mises à jour
+
+Quota Codex vérifie les nouvelles releases GitHub au démarrage. Une entrée **Vérifier les mises à jour…** est également disponible dans le menu de la barre des menus. Les mises à jour sont signées, téléchargées puis installées automatiquement avant le redémarrage de l’application.
+
+Pour activer la publication des mises à jour signées dans GitHub Actions, configure les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. La clé privée ne doit jamais être commitée ; la clé publique est intégrée dans `src-tauri/tauri.conf.json`.
+
 > La première version distribuée n’est pas signée avec un certificat Apple. Si macOS bloque son lancement, fais un clic droit sur **Quota Codex** dans Applications, choisis **Ouvrir**, puis confirme une seconde fois.
 
 Le guide détaillé, avec les adresses propres à chaque navigateur et les solutions aux problèmes courants, se trouve dans [docs/INSTALLATION.md](docs/INSTALLATION.md).

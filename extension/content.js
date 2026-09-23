@@ -1,4 +1,5 @@
 const SOURCE = "quota-codex-browser";
+const REFRESH_URL = "http://127.0.0.1:48721/refresh";
 
 function parseResetAt(value) {
   const normalized = value
@@ -95,7 +96,25 @@ function publishStatus() {
 }
 
 publishStatus();
-setInterval(publishStatus, 60_000);
+setInterval(publishStatus, 10_000);
+let refreshToken = null;
+async function checkForForcedRefresh() {
+  try {
+    const response = await fetch(REFRESH_URL, { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (refreshToken === null) {
+      refreshToken = data.refreshToken;
+    } else if (data.refreshToken !== refreshToken) {
+      refreshToken = data.refreshToken;
+      window.location.reload();
+    }
+  } catch {
+    // The desktop app may not be running yet.
+  }
+}
+checkForForcedRefresh();
+setInterval(checkForForcedRefresh, 2_000);
 let publishTimeout;
 new MutationObserver(() => {
   clearTimeout(publishTimeout);

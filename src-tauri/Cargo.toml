@@ -1,6 +1,6 @@
 [package]
 name = "chatgpt-quota-monitor"
-version = "1.0.0"
+version = "1.0.1"
 description = "Native macOS menu bar widget for Codex usage quotas"
 authors = ["Mathias Bunnens"]
 edition = "2021"
@@ -29,6 +29,9 @@ chrono = { version = "0.4", features = ["clock"] }
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2.12.0"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

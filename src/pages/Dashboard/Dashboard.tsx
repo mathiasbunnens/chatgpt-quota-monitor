@@ -27,6 +27,20 @@ function mergeSnapshots(
 export default function Dashboard() {
   const [snapshots, setSnapshots] = useState<Partial<Record<QuotaPeriod, QuotaSnapshot>>>({});
   const [platform, setPlatform] = useState("desktop");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
+
+  const refreshQuota = async () => {
+    setIsRefreshing(true);
+    try {
+      const storedSnapshots = await invoke<QuotaSnapshot[]>("get_quota_snapshots");
+      setSnapshots((current) => mergeSnapshots(current, storedSnapshots));
+      await invoke("request_quota_refresh");
+      setLastRefreshAt(new Date());
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     void invoke<string>("get_platform").then(setPlatform).catch(() => undefined);
@@ -70,6 +84,9 @@ export default function Dashboard() {
           <button type="button" onClick={() => void openUrl(USAGE_URL)}>
             Ouvrir la page d’utilisation
           </button>
+          <button type="button" onClick={() => void refreshQuota()} disabled={isRefreshing}>
+            {isRefreshing ? "Rechargement…" : "Recharger"}
+          </button>
         </section>
       </main>
     );
@@ -82,7 +99,12 @@ export default function Dashboard() {
           <p className="dashboard__eyebrow">Codex</p>
           <h1>Quotas</h1>
         </div>
-        <span className="dashboard__status"><i /> Synchronisé</span>
+        <div className="dashboard__actions">
+          <span className="dashboard__status"><i /> Synchronisé</span>
+          <button type="button" onClick={() => void refreshQuota()} disabled={isRefreshing}>
+            {isRefreshing ? "Rechargement…" : "Recharger"}
+          </button>
+        </div>
       </header>
       <section className="dashboard__quota-list" aria-label="État des limites Codex">
         {availableSnapshots.map((current) => {
@@ -102,7 +124,7 @@ export default function Dashboard() {
         })}
       </section>
       <footer className="dashboard__footer">
-        <span>{snapshot.model} · {platform}</span>
+        <span>{snapshot.model} · {platform}{lastRefreshAt ? ` · ${lastRefreshAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
         <button type="button" onClick={() => void openUrl(USAGE_URL)}>Ouvrir Codex ↗</button>
       </footer>
     </main>
