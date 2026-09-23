@@ -11,11 +11,16 @@ use tauri::{Emitter, Manager, State};
 use tiny_http::{Header, Method, Response, Server};
 
 #[cfg(target_os = "macos")]
-use objc2::{define_class, msg_send, rc::Retained, runtime::AnyObject, MainThreadOnly};
+use objc2::{
+    define_class, msg_send,
+    rc::Retained,
+    runtime::{AnyObject, ProtocolObject},
+    MainThreadOnly,
+};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu, NSMenuItem, NSStatusBar,
-    NSTextField, NSVariableStatusItemLength, NSView, NSWorkspace,
+    NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView, NSWorkspace,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
@@ -107,6 +112,13 @@ define_class!(
 
     unsafe impl NSObjectProtocol for QuotaMenuTarget {}
 
+    unsafe impl NSMenuDelegate for QuotaMenuTarget {
+        #[unsafe(method(menuWillOpen:))]
+        fn menu_will_open(&self, _menu: &NSMenu) {
+            request_quota_refresh();
+        }
+    }
+
     impl QuotaMenuTarget {
         #[unsafe(method(openUsage:))]
         fn open_usage(&self, _sender: Option<&AnyObject>) {
@@ -116,11 +128,6 @@ define_class!(
             if let Some(url) = url {
                 NSWorkspace::sharedWorkspace().openURL(&url);
             }
-        }
-
-        #[unsafe(method(refresh:))]
-        fn refresh(&self, _sender: Option<&AnyObject>) {
-            REFRESH_TOKEN.fetch_add(1, Ordering::Relaxed);
         }
 
         #[unsafe(method(checkForUpdates:))]
@@ -281,6 +288,23 @@ fn make_quota_item(
 }
 
 #[cfg(target_os = "macos")]
+fn make_version_item(mtm: MainThreadMarker, version: &str) -> Retained<NSMenuItem> {
+    let container = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, 280.0, 24.0));
+    let label =
+        NSTextField::labelWithString(&NSString::from_str(&format!("Quota Codex v{version}")), mtm);
+    label.setFrame(frame(16.0, 5.0, 248.0, 14.0));
+    label.setFont(Some(&NSFont::systemFontOfSize(10.0)));
+    label.setTextColor(Some(&NSColor::tertiaryLabelColor()));
+    label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+    container.addSubview(&label);
+
+    let item = NSMenuItem::new(mtm);
+    item.setView(Some(&container));
+    item.setEnabled(false);
+    item
+}
+
+#[cfg(target_os = "macos")]
 fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let mtm = MainThreadMarker::new().expect("menu setup must run on the main thread");
     let menu = NSMenu::new(mtm);
@@ -294,15 +318,7 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     menu.addItem(&NSMenuItem::separatorItem(mtm));
 
     let target = QuotaMenuTarget::new(mtm);
-
-    let refresh = NSMenuItem::new(mtm);
-    refresh.setTitle(&NSString::from_str("Recharger"));
-    unsafe {
-        refresh.setTarget(Some(&target));
-        refresh.setAction(Some(objc2::sel!(refresh:)));
-    }
-    menu.addItem(&refresh);
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.setDelegate(Some(ProtocolObject::from_ref(&*target)));
 
     let check_updates = NSMenuItem::new(mtm);
     check_updates.setTitle(&NSString::from_str("Vérifier les mises à jour…"));
@@ -320,6 +336,7 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     }
     menu.addItem(&open_usage);
 
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
     let quit = NSMenuItem::new(mtm);
     quit.setTitle(&NSString::from_str("Quitter"));
     let application = NSApplication::sharedApplication(mtm);
@@ -328,6 +345,9 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
         quit.setAction(Some(objc2::sel!(terminate:)));
     }
     menu.addItem(&quit);
+
+    let version = app.package_info().version.to_string();
+    menu.addItem(&make_version_item(mtm, &version));
 
     let status_item =
         NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
