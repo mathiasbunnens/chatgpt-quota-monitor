@@ -3,6 +3,8 @@ const CONNECTION_URL = "http://127.0.0.1:48721/connection";
 const REFRESH_URL = "http://127.0.0.1:48721/refresh";
 const REFRESH_ALARM = "quota-codex-refresh";
 const REFRESH_TOKEN_KEY = "desktopRefreshToken";
+const BACKGROUND_USAGE_TAB_KEY = "backgroundUsageTabId";
+const USAGE_PAGE_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage";
 const USAGE_PAGE_PATTERNS = [
   "https://chatgpt.com/codex/settings/usage*",
   "https://chatgpt.com/codex/cloud/settings/analytics*",
@@ -12,6 +14,58 @@ const USAGE_PAGE_PATTERNS = [
 
 let refreshCheckInFlight = false;
 let connectionCheckInFlight = false;
+
+function isUsagePage(url = "") {
+  return USAGE_PAGE_PATTERNS.some((pattern) => url.startsWith(pattern.replace(/\*$/, "")));
+}
+
+async function getStoredBackgroundTab() {
+  const stored = await chrome.storage.local.get(BACKGROUND_USAGE_TAB_KEY);
+  const tabId = stored[BACKGROUND_USAGE_TAB_KEY];
+  if (!Number.isInteger(tabId)) return undefined;
+
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (isUsagePage(tab.url)) return tab;
+  } catch {
+    // The tab was closed while Brave was not running or while the extension reloaded.
+  }
+
+  await chrome.storage.local.remove(BACKGROUND_USAGE_TAB_KEY);
+  return undefined;
+}
+
+async function findReusableBackgroundTab() {
+  const tabs = await chrome.tabs.query({ url: USAGE_PAGE_PATTERNS });
+  return tabs.find((tab) => !tab.active && tab.id !== undefined);
+}
+
+async function rememberBackgroundTab(tab) {
+  if (tab.id === undefined) return undefined;
+  await chrome.storage.local.set({ [BACKGROUND_USAGE_TAB_KEY]: tab.id });
+  return chrome.tabs.update(tab.id, { autoDiscardable: false, pinned: true });
+}
+
+async function getBackgroundUsageTab({ createIfMissing = false } = {}) {
+  const storedTab = await getStoredBackgroundTab();
+  if (storedTab) return storedTab;
+
+  const reusableTab = await findReusableBackgroundTab();
+  if (reusableTab) return rememberBackgroundTab(reusableTab);
+  if (!createIfMissing) return undefined;
+
+  const createdTab = await chrome.tabs.create({
+    url: USAGE_PAGE_URL,
+    active: false,
+    pinned: true,
+  });
+  return rememberBackgroundTab(createdTab);
+}
+
+async function refreshBackgroundUsageTab(options) {
+  const tab = await getBackgroundUsageTab(options);
+  if (tab?.id !== undefined) await chrome.tabs.reload(tab.id);
+}
 
 async function reportConnectionStatus() {
   if (connectionCheckInFlight) return;
@@ -31,13 +85,6 @@ async function reportConnectionStatus() {
   }
 }
 
-async function reloadUsagePages() {
-  const tabs = await chrome.tabs.query({ url: USAGE_PAGE_PATTERNS });
-  await Promise.all(
-    tabs.flatMap((tab) => (tab.id === undefined ? [] : [chrome.tabs.reload(tab.id)])),
-  );
-}
-
 async function checkForForcedRefresh() {
   if (refreshCheckInFlight) return;
   refreshCheckInFlight = true;
@@ -54,7 +101,9 @@ async function checkForForcedRefresh() {
     if (previousToken === refreshToken) return;
 
     await chrome.storage.local.set({ [REFRESH_TOKEN_KEY]: refreshToken });
-    if (previousToken !== undefined) await reloadUsagePages();
+    if (previousToken !== undefined || refreshToken > 0) {
+      await refreshBackgroundUsageTab({ createIfMissing: true });
+    }
   } catch {
     // The desktop app may not be running yet.
   } finally {
@@ -73,23 +122,31 @@ chrome.runtime.onInstalled.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
-  void reloadUsagePages().catch(() => undefined);
+  void refreshBackgroundUsageTab().catch(() => undefined);
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
+  void refreshBackgroundUsageTab().catch(() => undefined);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === REFRESH_ALARM) {
     void checkForForcedRefresh();
     void reportConnectionStatus();
+    void refreshBackgroundUsageTab().catch(() => undefined);
   }
 });
 
-chrome.tabs.onRemoved.addListener(() => {
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void chrome.storage.local.get(BACKGROUND_USAGE_TAB_KEY).then((stored) => {
+    if (stored[BACKGROUND_USAGE_TAB_KEY] === tabId) {
+      return chrome.storage.local.remove(BACKGROUND_USAGE_TAB_KEY);
+    }
+    return undefined;
+  });
   void reportConnectionStatus();
 });
 

@@ -31,7 +31,7 @@ use objc2_foundation::{
 };
 
 const BRIDGE_ADDRESS: &str = "127.0.0.1:48721";
-const BROWSER_CONNECTION_TIMEOUT_SECS: u64 = 20;
+const BROWSER_CONNECTION_TIMEOUT_SECS: u64 = 45;
 #[cfg(target_os = "macos")]
 const PROGRESS_WIDTH: f64 = 248.0;
 
@@ -254,7 +254,7 @@ define_class!(
         fn menu_will_open(&self, _menu: &NSMenu) {
             request_quota_refresh();
             if !browser_connection_is_active() {
-                open_usage_page();
+                ensure_brave_running_in_background();
             }
         }
     }
@@ -348,6 +348,24 @@ fn open_usage_page() {
     } else {
         workspace.openURL(&url);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_brave_running_in_background() {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let brave_bundle_id = NSString::from_str("com.brave.Browser");
+    let Some(brave_url) = workspace.URLForApplicationWithBundleIdentifier(&brave_bundle_id) else {
+        open_usage_page();
+        return;
+    };
+
+    let configuration = NSWorkspaceOpenConfiguration::configuration();
+    configuration.setActivates(false);
+    workspace.openApplicationAtURL_configuration_completionHandler(
+        &brave_url,
+        &configuration,
+        None,
+    );
 }
 
 fn reset_label(payload: &BrowserQuotaPayload) -> String {
