@@ -159,6 +159,7 @@ impl Provider {
     pub fn refresh(&self) {
         let _ = self.tx.send(Action::Refresh);
     }
+    #[cfg(target_os = "macos")]
     pub fn login(&self, device: bool) {
         let _ = self.tx.send(Action::Login(device));
     }
