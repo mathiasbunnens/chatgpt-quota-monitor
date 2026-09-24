@@ -21,8 +21,8 @@ use objc2::{
 };
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSAlert, NSAlertStyle, NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu,
-    NSMenuDelegate, NSMenuItem, NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView,
+    NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
@@ -85,94 +85,108 @@ impl Drop for UpdateCheckGuard {
     }
 }
 
-#[cfg(target_os = "macos")]
-async fn show_update_alert(
-    app: &tauri::AppHandle,
-    title: impl Into<String>,
-    message: impl Into<String>,
-    button: impl Into<String>,
-    is_error: bool,
-) {
-    let title = title.into();
-    let message = message.into();
-    let button = button.into();
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus {
+    phase: String,
+    message: String,
+    progress: Option<u8>,
+    current_version: String,
+    next_version: Option<String>,
+}
 
-    if let Err(error) = app.run_on_main_thread(move || {
-        let mtm = MainThreadMarker::new().expect("update alert must run on the main thread");
-        let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str(&title));
-        alert.setInformativeText(&NSString::from_str(&message));
-        alert.setAlertStyle(if is_error {
-            NSAlertStyle::Warning
-        } else {
-            NSAlertStyle::Informational
-        });
-        alert.addButtonWithTitle(&NSString::from_str(&button));
-        NSApplication::sharedApplication(mtm).activate();
-        alert.runModal();
-        let _ = sender.send(());
-    }) {
-        eprintln!("Quota Codex could not display update alert: {error}");
-        return;
+#[derive(Default)]
+struct UpdateState(Mutex<Option<UpdateStatus>>);
+
+fn update_status(
+    app: &tauri::AppHandle,
+    phase: &str,
+    message: impl Into<String>,
+    progress: Option<u8>,
+    next_version: Option<String>,
+) {
+    let status = UpdateStatus {
+        phase: phase.into(),
+        message: message.into(),
+        progress,
+        current_version: app.package_info().version.to_string(),
+        next_version,
+    };
+    if let Ok(mut state) = app.state::<UpdateState>().0.lock() {
+        *state = Some(status.clone());
     }
-
-    let _ = tauri::async_runtime::spawn_blocking(move || receiver.recv()).await;
+    if let Some(window) = app.get_webview_window("updater") {
+        let _ = window.emit("update-status", status);
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn show_update_alert(
-    app: &tauri::AppHandle,
-    title: impl Into<String>,
-    message: impl Into<String>,
-    _button: impl Into<String>,
-    _is_error: bool,
-) {
-    show_dashboard(app);
-    let _ = app.emit(
-        "update-status",
-        format!("{} : {}", title.into(), message.into()),
-    );
+fn show_update_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let window = if let Some(window) = app.get_webview_window("updater") {
+        window
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            "updater",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("Mise à jour de Quota Codex")
+        .inner_size(420.0, 260.0)
+        .min_inner_size(360.0, 240.0)
+        .resizable(false)
+        .center()
+        .build()?
+    };
+    window.show()?;
+    window.set_focus()?;
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(|| {
+        let mtm = MainThreadMarker::new().expect("update popup activation runs on main thread");
+        NSApplication::sharedApplication(mtm).activate();
+    });
+    Ok(())
 }
 
-async fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error: impl ToString) {
+fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error: impl ToString) {
     let error = error.to_string();
     eprintln!("Quota Codex update failed: {error}");
     if mode == UpdateCheckMode::Interactive {
-        show_update_alert(
+        let _ = show_update_window(app);
+        update_status(
             app,
-            "Impossible de mettre Quota Codex à jour",
+            "error",
             format!("Vérifie ta connexion Internet puis réessaie.\n\nDétail : {error}"),
-            "OK",
-            true,
-        )
-        .await;
+            None,
+            None,
+        );
     }
 }
 
-async fn check_and_install_update(app: tauri::AppHandle, mode: UpdateCheckMode) {
+async fn check_for_available_update(app: tauri::AppHandle, mode: UpdateCheckMode) {
     use tauri_plugin_updater::UpdaterExt;
 
     if UPDATE_CHECK_IN_PROGRESS.swap(true, Ordering::AcqRel) {
         if mode == UpdateCheckMode::Interactive {
-            show_update_alert(
-                &app,
-                "Vérification déjà en cours",
-                "Quota Codex vérifie ou installe déjà une mise à jour.",
-                "OK",
-                false,
-            )
-            .await;
+            let _ = show_update_window(&app);
         }
         return;
     }
     let _guard = UpdateCheckGuard;
     let current_version = app.package_info().version.to_string();
+    if mode == UpdateCheckMode::Interactive {
+        let _ = show_update_window(&app);
+        update_status(
+            &app,
+            "checking",
+            "Recherche d’une nouvelle version…",
+            None,
+            None,
+        );
+    }
 
     let update = match app.updater() {
         Ok(updater) => updater.check().await,
         Err(error) => {
-            show_update_error(&app, mode, error).await;
+            show_update_error(&app, mode, error);
             return;
         }
     };
@@ -180,51 +194,145 @@ async fn check_and_install_update(app: tauri::AppHandle, mode: UpdateCheckMode) 
     match update {
         Ok(Some(update)) => {
             let next_version = update.version.clone();
-            if mode == UpdateCheckMode::Interactive {
-                show_update_alert(
-                    &app,
-                    "Mise à jour disponible",
-                    format!(
-                        "La version {current_version} est installée. Quota Codex v{next_version} va être téléchargé et installé. Une confirmation apparaîtra lorsque l’installation sera terminée."
-                    ),
-                    "Installer",
-                    false,
-                )
-                .await;
-            }
-
-            let result = update
-                .download_and_install(|_chunk_length, _content_length| {}, || {})
-                .await;
-            if let Err(error) = result {
-                show_update_error(&app, mode, error).await;
-            } else {
-                show_update_alert(
-                    &app,
-                    "Mise à jour installée",
-                    format!(
-                        "La version {next_version} a été installée. Quota Codex va maintenant redémarrer."
-                    ),
-                    "Redémarrer",
-                    false,
-                )
-                .await;
-                app.restart();
-            }
-        }
-        Ok(None) if mode == UpdateCheckMode::Interactive => {
-            show_update_alert(
+            let _ = show_update_window(&app);
+            update_status(
                 &app,
-                "Quota Codex est à jour",
-                format!("La version {current_version} est la dernière version disponible."),
-                "OK",
-                false,
-            )
-            .await;
+                "available",
+                format!(
+                    "La version {current_version} est installée. Quota Codex v{next_version} est disponible."
+                ),
+                None,
+                Some(next_version),
+            );
         }
+        Ok(None) if mode == UpdateCheckMode::Interactive => update_status(
+            &app,
+            "up-to-date",
+            format!("La version {current_version} est la dernière version disponible."),
+            None,
+            None,
+        ),
         Ok(None) => {}
-        Err(error) => show_update_error(&app, mode, error).await,
+        Err(error) => show_update_error(&app, mode, error),
     }
+}
+
+async fn download_and_install_update(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    if UPDATE_CHECK_IN_PROGRESS.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _guard = UpdateCheckGuard;
+    let update = match app.updater() {
+        Ok(updater) => updater.check().await,
+        Err(error) => {
+            show_update_error(&app, UpdateCheckMode::Interactive, error);
+            return;
+        }
+    };
+    let update = match update {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            update_status(
+                &app,
+                "up-to-date",
+                "Aucune mise à jour n’est plus disponible.",
+                None,
+                None,
+            );
+            return;
+        }
+        Err(error) => {
+            show_update_error(&app, UpdateCheckMode::Interactive, error);
+            return;
+        }
+    };
+    let next_version = update.version.clone();
+    update_status(
+        &app,
+        "downloading",
+        format!("Téléchargement de Quota Codex v{next_version}…"),
+        Some(0),
+        Some(next_version.clone()),
+    );
+    let progress_app = app.clone();
+    let progress_version = next_version.clone();
+    let mut downloaded = 0_u64;
+    let mut last_progress = 0_u8;
+    let result = update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                downloaded = downloaded.saturating_add(chunk_length as u64);
+                let progress = content_length
+                    .filter(|total| *total > 0)
+                    .map(|total| ((downloaded.saturating_mul(100) / total).min(100)) as u8)
+                    .unwrap_or(last_progress);
+                if progress != last_progress {
+                    last_progress = progress;
+                    update_status(
+                        &progress_app,
+                        "downloading",
+                        format!("Téléchargement de Quota Codex v{progress_version}…"),
+                        Some(progress),
+                        Some(progress_version.clone()),
+                    );
+                }
+            },
+            || {},
+        )
+        .await;
+    match result {
+        Ok(()) => update_status(
+            &app,
+            "ready",
+            format!("Quota Codex v{next_version} est installé et prêt à être relancé."),
+            Some(100),
+            Some(next_version),
+        ),
+        Err(error) => show_update_error(&app, UpdateCheckMode::Interactive, error),
+    }
+}
+
+#[tauri::command]
+fn get_update_status(app: tauri::AppHandle) -> UpdateStatus {
+    app.state::<UpdateState>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|status| status.clone())
+        .unwrap_or_else(|| UpdateStatus {
+            phase: "checking".into(),
+            message: "Recherche d’une nouvelle version…".into(),
+            progress: None,
+            current_version: app.package_info().version.to_string(),
+            next_version: None,
+        })
+}
+
+#[tauri::command]
+fn start_update_check(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(check_for_available_update(
+        app,
+        UpdateCheckMode::Interactive,
+    ));
+}
+
+#[tauri::command]
+fn start_update_install(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(download_and_install_update(app));
+}
+
+#[tauri::command]
+fn close_update_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("updater") {
+        let _ = window.close();
+    }
+}
+
+#[tauri::command]
+fn restart_application(app: tauri::AppHandle) {
+    app.restart();
 }
 
 #[derive(Clone, Copy)]
@@ -268,14 +376,15 @@ define_class!(
             if let Some(app) = APP_HANDLE.get() { app.exit(0); }
         }
 
-        #[unsafe(method(showDashboard:))]
-        fn show_dashboard_action(&self, _sender: Option<&AnyObject>) {
-            if let Some(app) = APP_HANDLE.get() { show_dashboard(app); }
-        }
-
-        #[unsafe(method(showSettings:))]
-        fn show_settings(&self, _sender: Option<&AnyObject>) {
-            if let Some(app) = APP_HANDLE.get() { open_refresh_settings(app); }
+        #[unsafe(method(connectAccount:))]
+        fn connect_account(&self, _sender: Option<&AnyObject>) {
+            let Some(app) = APP_HANDLE.get() else { return; };
+            let Some(provider) = app.try_state::<codex::Provider>() else { return; };
+            if provider.status().phase == "missing" {
+                let _ = codex::open_codex_install(app.clone());
+            } else {
+                provider.login(false);
+            }
         }
         #[unsafe(method(refreshQuota:))]
         fn refresh_quota(&self, _sender: Option<&AnyObject>) {
@@ -289,7 +398,7 @@ define_class!(
         #[unsafe(method(checkForUpdates:))]
         fn check_for_updates(&self, _sender: Option<&AnyObject>) {
             if let Some(app) = APP_HANDLE.get().cloned() {
-                tauri::async_runtime::spawn(check_and_install_update(
+                tauri::async_runtime::spawn(check_for_available_update(
                     app,
                     UpdateCheckMode::Interactive,
                 ));
@@ -406,6 +515,32 @@ fn reset_label(payload: &QuotaPayload) -> String {
         .unwrap_or_else(|| "--".to_string())
 }
 
+fn quota_color_transition(percentage: u32) -> (&'static str, &'static str, f64) {
+    match percentage {
+        0..=20 => ("red", "red", 0.0),
+        21..=40 => ("red", "orange", f64::from(percentage - 20) / 20.0),
+        41..=60 => ("orange", "green", f64::from(percentage - 40) / 20.0),
+        _ => ("green", "green", 0.0),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn quota_color(percentage: u32) -> Retained<NSColor> {
+    let (from, to, fraction) = quota_color_transition(percentage);
+    let color = |name| match name {
+        "red" => NSColor::systemRedColor(),
+        "orange" => NSColor::systemOrangeColor(),
+        _ => NSColor::systemGreenColor(),
+    };
+    let from_color = color(from);
+    if from == to {
+        return from_color;
+    }
+    from_color
+        .blendedColorWithFraction_ofColor(fraction, &color(to))
+        .unwrap_or(from_color)
+}
+
 #[cfg(target_os = "macos")]
 fn render_native_menu(app: &tauri::AppHandle) {
     let app = app.clone();
@@ -428,13 +563,8 @@ fn render_native_menu(app: &tauri::AppHandle) {
         menu.setDelegate(Some(ProtocolObject::from_ref(target)));
         if snapshots.is_empty() {
             let item = NSMenuItem::new(mtm);
-            item.setTitle(&NSString::from_str(
-                "Quotas indisponibles · Ouvrir le tableau de bord",
-            ));
-            unsafe {
-                item.setTarget(Some(target));
-                item.setAction(Some(objc2::sel!(showDashboard:)));
-            }
+            item.setTitle(&NSString::from_str("Quotas indisponibles"));
+            item.setEnabled(false);
             menu.addItem(&item);
         }
         for payload in &snapshots {
@@ -454,21 +584,32 @@ fn render_native_menu(app: &tauri::AppHandle) {
                     PROGRESS_WIDTH * f64::from(percentage) / 100.0,
                     8.0,
                 ));
-                fill.setFillColor(&if percentage <= 20 {
-                    NSColor::systemRedColor()
-                } else if percentage <= 40 {
-                    NSColor::systemOrangeColor()
-                } else {
-                    NSColor::systemGreenColor()
-                });
+                let color = quota_color(percentage);
+                fill.setFillColor(&color);
             }
             menu.addItem(&item);
             menu.addItem(&NSMenuItem::separatorItem(mtm));
         }
+        let connection_phase = app
+            .try_state::<codex::Provider>()
+            .map(|provider| provider.status().phase)
+            .unwrap_or_else(|| "starting".into());
+        if connection_phase != "ready" {
+            let connection = NSMenuItem::new(mtm);
+            connection.setTitle(&NSString::from_str(if connection_phase == "logging_in" {
+                "Connexion en cours…"
+            } else {
+                "Connexion…"
+            }));
+            connection.setEnabled(connection_phase != "logging_in");
+            unsafe {
+                connection.setTarget(Some(target));
+                connection.setAction(Some(objc2::sel!(connectAccount:)));
+            }
+            menu.addItem(&connection);
+        }
         for (title, action) in [
-            ("Afficher les quotas", objc2::sel!(showDashboard:)),
             ("Actualiser les quotas", objc2::sel!(refreshQuota:)),
-            ("Réglages d’actualisation…", objc2::sel!(showSettings:)),
             ("Voir les détails sur Codex…", objc2::sel!(openUsage:)),
             ("Vérifier les mises à jour…", objc2::sel!(checkForUpdates:)),
         ] {
@@ -510,6 +651,7 @@ fn render_native_menu(app: &tauri::AppHandle) {
     });
 }
 
+#[cfg(not(target_os = "macos"))]
 fn open_refresh_settings(app: &tauri::AppHandle) {
     show_dashboard(app);
     let _ = app.emit("open-refresh-settings", ());
@@ -648,6 +790,7 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn show_dashboard(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -724,7 +867,7 @@ fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = open_usage_details(app.clone());
             }
             "update" => {
-                tauri::async_runtime::spawn(check_and_install_update(
+                tauri::async_runtime::spawn(check_for_available_update(
                     app.clone(),
                     UpdateCheckMode::Interactive,
                 ));
@@ -772,11 +915,17 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(QuotaState::default())
+        .manage(UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             get_platform,
             get_quota_snapshots,
             request_quota_refresh,
             open_usage_details,
+            get_update_status,
+            start_update_check,
+            start_update_install,
+            close_update_window,
+            restart_application,
             codex::get_codex_status,
             codex::set_refresh_settings,
             codex::start_codex_login,
@@ -790,12 +939,13 @@ pub fn run() {
             let _ = APP_HANDLE.set(app.handle().clone());
 
             #[cfg(not(debug_assertions))]
-            tauri::async_runtime::spawn(check_and_install_update(
+            tauri::async_runtime::spawn(check_for_available_update(
                 app.handle().clone(),
                 UpdateCheckMode::Automatic,
             ));
 
-            let window = tauri::WebviewWindowBuilder::new(
+            #[cfg(not(target_os = "macos"))]
+            let _window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -804,19 +954,6 @@ pub fn run() {
             .inner_size(500.0, 620.0)
             .min_inner_size(360.0, 420.0)
             .build()?;
-            #[cfg(target_os = "macos")]
-            window.on_window_event({
-                let window = window.clone();
-                move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        if window.hide().is_ok() {
-                            api.prevent_close();
-                        }
-                    }
-                }
-            });
-            #[cfg(not(target_os = "macos"))]
-            let _ = window;
             #[cfg(target_os = "macos")]
             app.handle()
                 .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
@@ -868,5 +1005,15 @@ mod tests {
     fn missing_reserve_is_not_fabricated() {
         let rows = codex::normalize(&serde_json::json!({"rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":300}}})).unwrap();
         assert!(visible_quotas(rows, Some("plus")).is_empty());
+    }
+
+    #[test]
+    fn quota_color_blends_between_thresholds() {
+        assert_eq!(quota_color_transition(20), ("red", "red", 0.0));
+        assert_eq!(quota_color_transition(30), ("red", "orange", 0.5));
+        assert_eq!(quota_color_transition(40), ("red", "orange", 1.0));
+        assert_eq!(quota_color_transition(50), ("orange", "green", 0.5));
+        assert_eq!(quota_color_transition(60), ("orange", "green", 1.0));
+        assert_eq!(quota_color_transition(80), ("green", "green", 0.0));
     }
 }
