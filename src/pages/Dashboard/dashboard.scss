@@ -1,270 +1,58 @@
-@use "../../styles/variables" as *;
-
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --desktop-bg: #f5f5f7; --desktop-card: #fff; --desktop-ink: #1d1d1f;
+  --desktop-muted: #6e6e73; --desktop-border: #dedee3; --desktop-accent: #007aff;
+  --desktop-radius: 12px; color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --desktop-bg: #202023; --desktop-card: #2c2c2e; --desktop-ink: #f5f5f7;
+  --desktop-muted: #ababaf; --desktop-border: #444448; --desktop-accent: #64aaff; color-scheme: dark;
+}}
 .dashboard {
-  min-height: 100vh;
-  padding: 1.15rem;
-  overflow: hidden;
-  background: linear-gradient(160deg, #fffdf9 0%, #f6efe9 100%);
-
-  &__header,
-  &__footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  &__actions {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-
-    button {
-      padding: 0.45rem 0.7rem;
-      border: 1px solid $color-border;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.72);
-      color: $color-accent-dark;
-      font-size: 0.68rem;
-      font-weight: 800;
-
-      &:disabled {
-        cursor: wait;
-        opacity: 0.55;
-      }
-    }
-  }
-
-  &__eyebrow {
-    margin: 0 0 0.35rem;
-    color: $color-accent-dark;
-    font-size: 0.7rem;
-    font-weight: 900;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-  }
-
-  h1 {
-    margin: 0;
-    font-family: $font-display;
-    font-size: 1.35rem;
-    line-height: 1;
-  }
-
-  &__status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    color: $color-muted;
-    font-size: 0.72rem;
-    text-align: right;
-
-    i {
-      width: 0.5rem;
-      height: 0.5rem;
-      border-radius: 50%;
-      background: $color-success;
-      box-shadow: 0 0 0 0.25rem rgba(55, 141, 109, 0.13);
-    }
-  }
-
-  &__quota-list {
-    display: grid;
-    gap: 0.65rem;
-    margin-top: 1rem;
-  }
-
-  &__quota {
-    padding: 0.85rem 0.9rem;
-    border: 1px solid $color-border;
-    border-radius: 1rem;
-    background: rgba(255, 255, 255, 0.78);
-    box-shadow: 0 0.45rem 1.4rem rgba(76, 45, 67, 0.06);
-
-    > p {
-      display: block;
-      margin: 0.45rem 0 0;
-      color: $color-muted;
-      font-size: 0.66rem;
-    }
-  }
-
-  &__quota-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
-    font-size: 0.76rem;
-
-    strong {
-      color: $color-ink;
-      font-size: 1rem;
-
-      small {
-        color: $color-muted;
-        font-size: 0.58rem;
-        font-weight: 600;
-      }
-    }
-  }
-
-  &__progress {
-    height: 0.35rem;
-    margin-top: 0.55rem;
-    overflow: hidden;
-    border-radius: 999px;
-    background: #e9e1dc;
-
-    span {
-      display: block;
-      height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, #23965f, #35c779);
-      transition: width 250ms ease;
-    }
-  }
-
-  &__footer {
-    margin-top: 0.85rem;
-    color: $color-muted;
-    font-size: 0.65rem;
-
-    button {
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: $color-accent-dark;
-      font-size: 0.68rem;
-      font-weight: 800;
-    }
-  }
-
-  &__empty-state {
-    display: grid;
-    min-height: calc(100vh - 3rem);
-    place-items: center;
-    align-content: center;
-    gap: 0.7rem;
-    text-align: center;
-
-    h1,
-    p {
-      margin: 0;
-    }
-
-    h1 {
-      font-family: $font-display;
-      font-size: 1.8rem;
-    }
-
-    > p:not(.dashboard__eyebrow) {
-      max-width: 18rem;
-      color: $color-muted;
-      font-size: 0.85rem;
-      line-height: 1.45;
-    }
-
-    button {
-      margin-top: 0.4rem;
-      padding: 0.65rem 0.9rem;
-      border: 0;
-      border-radius: 999px;
-      background: $color-ink;
-      color: white;
-      font-weight: 800;
-    }
-
-    button + button {
-      margin-top: 0;
-      border: 1px solid $color-border;
-      background: transparent;
-      color: $color-ink;
-    }
-  }
-
-  &__empty-icon {
-    display: grid;
-    width: 3rem;
-    height: 3rem;
-    place-items: center;
-    border-radius: 50%;
-    background: $color-lilac;
-    color: $color-ink;
-    font-family: $font-display;
-    font-size: 1.25rem;
-    font-weight: 800;
-  }
+  min-height: 100vh; padding: 24px; background: var(--desktop-bg); color: var(--desktop-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  h1 { font-size: 26px; font-weight: 650; line-height: 1.2; font-family: inherit; margin: 0; letter-spacing: -0.7px; }
+  &__header, &__actions, &__footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  &__actions { margin-top: 14px; justify-content: flex-start; }
+  &__eyebrow { margin: 0 0 7px; font-size: 12px; font-weight: 600; color: var(--desktop-muted); }
+  &__source, &__strategy { color: var(--desktop-muted); font-size: 12px; line-height: 1.6; margin: 16px 0; }
+  &__quota-list { display: grid; gap: 12px; margin: 20px 0; }
+  &__quota { border: 1px solid var(--desktop-border); border-radius: 14px; padding: 20px; background: var(--desktop-card); box-shadow: 0 2px 5px #00000005; }
+  &__quota-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; font-size: 13px; font-weight: 600; }
+  &__quota-heading strong { font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: -0.8px; }
+  &__quota-heading small { font-size: 11px; font-weight: 400; letter-spacing: 0; color: var(--desktop-muted); }
+  &__quota > p { margin: 12px 0 0; color: var(--desktop-muted); font-size: 11px; line-height: 1.5; }
+  &__progress { height: 7px; margin-top: 14px; background: var(--desktop-border); border-radius: 8px; overflow: hidden; }
+  &__progress span { display: block; height: 100%; border-radius: inherit; background: #30a46c; transition: width 250ms ease; }
+  &__progress--warning span { background: #d68b12; }
+  &__progress--low span { background: #e5484d; }
+  &__footer { color: var(--desktop-muted); font-size: 11px; }
+  &__footer button { color: var(--desktop-accent); }
 }
-
-// Desktop surfaces use the host font and platform-specific corner treatments.
-:root[data-platform="windows"],
-:root[data-platform="linux"] {
-  --desktop-bg: #f3f3f3;
-  --desktop-card: #ffffff;
-  --desktop-ink: #202020;
-  --desktop-muted: #616161;
-  --desktop-border: #d6d6d6;
-  --desktop-accent: #0067c0;
-  --desktop-radius: 4px;
-  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
-  color: var(--desktop-ink);
-  background: var(--desktop-bg);
-
-  .dashboard {
-    background: var(--desktop-bg);
-    color: var(--desktop-ink);
-    h1 { font-family: inherit; line-height: 1.2; }
-    &__header, &__actions, &__footer { flex-wrap: wrap; }
-    &__quota {
-      background: var(--desktop-card);
-      border-color: var(--desktop-border);
-      border-radius: var(--desktop-radius);
-      box-shadow: none;
-    }
-    &__quota-heading { flex-wrap: wrap; gap: 0.4rem; }
-    &__quota-heading strong { color: var(--desktop-ink); }
-    &__quota > p, &__quota-heading small, &__status, &__footer,
-    &__empty-state > p { color: var(--desktop-muted); }
-    &__eyebrow, &__footer button { color: var(--desktop-accent); }
-    button {
-      border: 1px solid var(--desktop-border);
-      border-radius: var(--desktop-radius);
-      background: var(--desktop-card);
-      color: var(--desktop-accent);
-      padding: 0.5rem 0.75rem;
-      font-weight: 600;
-      &:hover { filter: brightness(0.95); }
-      &:disabled { opacity: 0.55; cursor: wait; }
-      &:focus-visible { outline: 2px solid var(--desktop-accent); }
-    }
-    &__empty-icon { background: var(--desktop-accent); color: white; font-family: inherit; }
-    &__progress { background: var(--desktop-border); }
-  }
+.dashboard button, .settings-panel button {
+  font: inherit; font-size: 12px; font-weight: 500; padding: 7px 12px; cursor: pointer;
+  border: 1px solid var(--desktop-border); border-radius: 8px; color: var(--desktop-ink); background: var(--desktop-card);
+  box-shadow: 0 1px 2px #00000008;
+  &:hover { background: var(--desktop-bg); }
+  &:focus-visible { outline: 2px solid var(--desktop-accent); outline-offset: 3px; }
+  &:disabled { opacity: 0.5; cursor: wait; }
 }
-
-:root[data-platform="linux"] {
-  --desktop-bg: #fafafa;
-  --desktop-accent: #1c71d8;
-  --desktop-radius: 12px;
-  font-family: "Adwaita Sans", "Cantarell", "Ubuntu", system-ui, sans-serif;
-  .dashboard button { border-radius: 8px; }
+.plan-badge { display: inline-block; margin-left: 6px; padding: 2px 7px; border: 1px solid var(--desktop-border); border-radius: 6px; text-transform: capitalize; color: var(--desktop-ink); }
+.settings-panel {
+  position: fixed; inset: 0 0 0 auto; margin: 0; width: min(380px, 100vw); height: 100dvh; max-height: 100dvh;
+  max-width: 100vw; padding: 24px; border: 0; border-left: 1px solid var(--desktop-border);
+  background: var(--desktop-bg); color: var(--desktop-ink); box-shadow: -12px 0 40px #0002;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  &::backdrop { background: #0004; }
+  header, footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  h2 { margin: 0; font-size: 22px; letter-spacing: -0.5px; }
+  p { font-size: 12px; line-height: 1.65; color: var(--desktop-muted); }
+  label { display: block; margin: 22px 0 8px; font-size: 13px; font-weight: 600; }
+  select { width: 100%; padding: 10px; border: 1px solid var(--desktop-border); border-radius: 8px; background: var(--desktop-card); color: var(--desktop-ink); font: inherit; font-size: 12px; }
+  &__account { display: flex; flex-direction: column; gap: 6px; padding: 16px; margin: 24px 0; background: var(--desktop-card); border: 1px solid var(--desktop-border); border-radius: 12px; font-size: 12px; }
+  &__account strong { text-transform: capitalize; font-size: 16px; }
+  footer { justify-content: flex-end; margin-top: 28px; }
+  button.primary { background: #007aff; color: white; border-color: #007aff; }
 }
-
-.dashboard__progress--warning span { background: #ba7510; }
-.dashboard__progress--low span { background: #c42b1c; }
-
-@media (prefers-color-scheme: dark) {
-  :root[data-platform="windows"], :root[data-platform="linux"] {
-    --desktop-bg: #202020;
-    --desktop-card: #2d2d2d;
-    --desktop-ink: #f5f5f5;
-    --desktop-muted: #c6c6c6;
-    --desktop-border: #484848;
-    --desktop-accent: #75baff;
-    color-scheme: dark;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dashboard__progress span { transition: none; }
-}
+@media (max-width: 390px) { .dashboard { padding: 16px; } }
+@media (prefers-reduced-motion: reduce) { .dashboard__progress span { transition: none; } }

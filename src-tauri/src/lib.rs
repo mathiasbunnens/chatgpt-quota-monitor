@@ -1,23 +1,16 @@
+mod activity;
 mod codex;
-mod setup;
+#[cfg(any(not(target_os = "macos"), test))]
+mod tray_percentage;
 
 #[cfg(target_os = "macos")]
 use chrono::{DateTime, Local};
-use serde::{Deserialize, Serialize};
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
+use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
-    },
-    time::{SystemTime, UNIX_EPOCH},
-};
-use tauri::{Manager, State};
-use tiny_http::{Header, Method, Response, Server};
+use std::sync::{atomic::Ordering, Mutex};
+use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "macos")]
 use objc2::{
@@ -36,13 +29,11 @@ use objc2_foundation::{
     MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 
-const BRIDGE_ADDRESS: &str = "127.0.0.1:48721";
-const BROWSER_CONNECTION_TIMEOUT_SECS: u64 = 45;
 #[cfg(target_os = "macos")]
 const PROGRESS_WIDTH: f64 = 248.0;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct BrowserQuotaPayload {
+#[derive(Debug, Serialize, Clone)]
+struct QuotaPayload {
     model: String,
     remaining: u32,
     limit: u32,
@@ -54,62 +45,31 @@ struct BrowserQuotaPayload {
     period: String,
     #[serde(rename = "resetLabel", alias = "reset_label", default)]
     reset_label: Option<String>,
-    #[serde(skip_deserializing, default = "browser_source")]
     source: String,
     #[serde(default)]
     label: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BrowserConnectionPayload {
-    connected: bool,
-}
-
-fn browser_source() -> String {
-    "browser".to_string()
+    #[serde(default, rename = "windowMinutes")]
+    window_minutes: Option<i64>,
 }
 
 #[derive(Default)]
-struct QuotaData {
-    browser: HashMap<String, BrowserQuotaPayload>,
-    // Some(empty) is an authoritative response with no published windows.
-    codex: Option<Vec<BrowserQuotaPayload>>,
-}
-impl QuotaData {
-    fn effective(&self) -> Vec<BrowserQuotaPayload> {
-        if let Some(snapshots) = &self.codex {
-            return snapshots.clone();
-        }
-        let mut snapshots: Vec<_> = self.browser.values().cloned().collect();
-        snapshots.sort_by(|a, b| a.period.cmp(&b.period));
-        snapshots
-    }
-}
-#[derive(Default)]
-struct QuotaState(Mutex<QuotaData>);
+struct QuotaState(Mutex<Vec<QuotaPayload>>);
 
 fn publish_quotas(app: &tauri::AppHandle) {
     render_native_menu(app);
 }
 
-fn set_codex_snapshots(app: &tauri::AppHandle, snapshots: Option<Vec<BrowserQuotaPayload>>) {
+fn set_codex_snapshots(app: &tauri::AppHandle, snapshots: Option<Vec<QuotaPayload>>) {
     if let Ok(mut data) = app.state::<QuotaState>().0.lock() {
-        data.codex = snapshots;
+        *data = snapshots.unwrap_or_default();
     }
     publish_quotas(app);
 }
 
-static LAST_EXTENSION_MESSAGE_AT: AtomicU64 = AtomicU64::new(0);
-static BRIDGE_ERROR: Mutex<Option<String>> = Mutex::new(None);
-
-static REFRESH_TOKEN: AtomicU64 = AtomicU64::new(0);
-static LAST_BROWSER_MESSAGE_AT: AtomicU64 = AtomicU64::new(0);
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 static UPDATE_CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum UpdateCheckMode {
     #[cfg(not(debug_assertions))]
@@ -117,10 +77,8 @@ enum UpdateCheckMode {
     Interactive,
 }
 
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 struct UpdateCheckGuard;
 
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 impl Drop for UpdateCheckGuard {
     fn drop(&mut self) {
         UPDATE_CHECK_IN_PROGRESS.store(false, Ordering::Release);
@@ -162,18 +120,21 @@ async fn show_update_alert(
     let _ = tauri::async_runtime::spawn_blocking(move || receiver.recv()).await;
 }
 
-#[cfg(all(not(target_os = "macos"), not(debug_assertions)))]
+#[cfg(not(target_os = "macos"))]
 async fn show_update_alert(
-    _app: &tauri::AppHandle,
+    app: &tauri::AppHandle,
     title: impl Into<String>,
     message: impl Into<String>,
     _button: impl Into<String>,
     _is_error: bool,
 ) {
-    eprintln!("{}: {}", title.into(), message.into());
+    show_dashboard(app);
+    let _ = app.emit(
+        "update-status",
+        format!("{} : {}", title.into(), message.into()),
+    );
 }
 
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 async fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error: impl ToString) {
     let error = error.to_string();
     eprintln!("Quota Codex update failed: {error}");
@@ -189,7 +150,6 @@ async fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error:
     }
 }
 
-#[cfg(any(target_os = "macos", not(debug_assertions)))]
 async fn check_and_install_update(app: tauri::AppHandle, mode: UpdateCheckMode) {
     use tauri_plugin_updater::UpdaterExt;
 
@@ -313,6 +273,14 @@ define_class!(
             if let Some(app) = APP_HANDLE.get() { show_dashboard(app); }
         }
 
+        #[unsafe(method(showSettings:))]
+        fn show_settings(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = APP_HANDLE.get() { open_refresh_settings(app); }
+        }
+        #[unsafe(method(refreshQuota:))]
+        fn refresh_quota(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = APP_HANDLE.get() { request_quota_refresh(app.clone()); }
+        }
         #[unsafe(method(openUsage:))]
         fn open_usage(&self, _sender: Option<&AnyObject>) {
             open_usage_page();
@@ -344,73 +312,86 @@ fn get_platform() -> String {
 }
 
 #[tauri::command]
-fn get_quota_snapshots(state: State<'_, QuotaState>) -> Vec<BrowserQuotaPayload> {
-    state
+fn get_quota_snapshots(app: tauri::AppHandle) -> Vec<QuotaPayload> {
+    let rows = app
+        .state::<QuotaState>()
         .0
         .lock()
-        .map(|snapshots| snapshots.effective())
-        .unwrap_or_default()
+        .map(|data| data.clone())
+        .unwrap_or_default();
+    let plan = app
+        .try_state::<codex::Provider>()
+        .and_then(|provider| provider.status().plan_type);
+    visible_quotas(rows, plan.as_deref())
+}
+
+fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaPayload> {
+    let reserve = |p: &QuotaPayload| {
+        let identity = format!("{} {}", p.period, p.model).to_ascii_lowercase();
+        identity.contains("reserve") || identity.contains("luna")
+    };
+    let five = |p: &QuotaPayload| {
+        !reserve(p) && (p.period == "five-hour" || p.window_minutes == Some(300))
+    };
+    rows.sort_by_key(|p| {
+        (
+            !five(p),
+            !p.period.starts_with("codex:codex:"),
+            p.period.clone(),
+        )
+    });
+    if plan != Some("plus") {
+        return rows;
+    }
+    if let Some(active) = rows.iter().find(|p| five(p) && p.remaining > 0) {
+        return vec![active.clone()];
+    }
+    let reserves: Vec<_> = rows
+        .iter()
+        .filter(|p| {
+            let identity = format!("{} {}", p.period, p.model).to_ascii_lowercase();
+            identity.contains("reserve") || identity.contains("luna")
+        })
+        .cloned()
+        .collect();
+    if !reserves.is_empty() {
+        return reserves;
+    }
+    // An exhausted five-hour quota is hidden even if reserve is unavailable.
+    if rows.iter().any(five) {
+        return Vec::new();
+    }
+    // Weekly-only accounts keep the actual window reported by Codex.
+    rows
 }
 
 #[tauri::command]
-fn request_quota_refresh(app: tauri::AppHandle) -> u64 {
+fn request_quota_refresh(app: tauri::AppHandle) {
     if let Some(provider) = app.try_state::<codex::Provider>() {
         provider.refresh();
     }
-    REFRESH_TOKEN.fetch_add(1, Ordering::Relaxed) + 1
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConnectionStatus {
-    extension_connected: bool,
-    usage_page_open: bool,
-    bridge_error: Option<String>,
 }
 
 #[tauri::command]
-fn get_connection_status() -> ConnectionStatus {
-    ConnectionStatus {
-        extension_connected: connection_is_recent_at(
-            LAST_EXTENSION_MESSAGE_AT.load(Ordering::Acquire),
-            unix_timestamp_secs(),
-        ),
-        usage_page_open: browser_connection_is_active(),
-        bridge_error: BRIDGE_ERROR.lock().ok().and_then(|error| error.clone()),
-    }
-}
-
-fn unix_timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or_default()
-}
-
-fn connection_is_recent_at(last_message_at: u64, now: u64) -> bool {
-    last_message_at > 0 && now.saturating_sub(last_message_at) <= BROWSER_CONNECTION_TIMEOUT_SECS
-}
-
-fn browser_connection_is_active() -> bool {
-    connection_is_recent_at(
-        LAST_BROWSER_MESSAGE_AT.load(Ordering::Acquire),
-        unix_timestamp_secs(),
-    )
-}
-
-fn mark_browser_connected() {
-    LAST_BROWSER_MESSAGE_AT.store(unix_timestamp_secs(), Ordering::Release);
+fn open_usage_details(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(
+            "https://chatgpt.com/codex/cloud/settings/analytics#usage",
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "macos")]
 fn open_usage_page() {
     if let Some(app) = APP_HANDLE.get() {
-        let _ = setup::open_selected_usage(app.clone());
+        let _ = open_usage_details(app.clone());
     }
 }
 
 #[cfg(target_os = "macos")]
-fn reset_label(payload: &BrowserQuotaPayload) -> String {
+fn reset_label(payload: &QuotaPayload) -> String {
     DateTime::parse_from_rfc3339(&payload.reset_at)
         .map(|date| {
             let local = date.with_timezone(&Local);
@@ -439,7 +420,7 @@ fn render_native_menu(app: &tauri::AppHandle) {
         else {
             return;
         };
-        let snapshots = get_quota_snapshots(app.state::<QuotaState>());
+        let snapshots = get_quota_snapshots(app.clone());
         let mtm = MainThreadMarker::new().expect("native menu on main thread");
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
@@ -485,11 +466,10 @@ fn render_native_menu(app: &tauri::AppHandle) {
             menu.addItem(&NSMenuItem::separatorItem(mtm));
         }
         for (title, action) in [
-            ("Tableau de bord et connexion…", objc2::sel!(showDashboard:)),
-            (
-                "Voir les détails sur la page d’utilisation…",
-                objc2::sel!(openUsage:),
-            ),
+            ("Afficher les quotas", objc2::sel!(showDashboard:)),
+            ("Actualiser les quotas", objc2::sel!(refreshQuota:)),
+            ("Réglages d’actualisation…", objc2::sel!(showSettings:)),
+            ("Voir les détails sur Codex…", objc2::sel!(openUsage:)),
             ("Vérifier les mises à jour…", objc2::sel!(checkForUpdates:)),
         ] {
             let item = NSMenuItem::new(mtm);
@@ -530,7 +510,12 @@ fn render_native_menu(app: &tauri::AppHandle) {
     });
 }
 
-fn quota_label(payload: &BrowserQuotaPayload) -> String {
+fn open_refresh_settings(app: &tauri::AppHandle) {
+    show_dashboard(app);
+    let _ = app.emit("open-refresh-settings", ());
+}
+
+fn quota_label(payload: &QuotaPayload) -> String {
     payload
         .label
         .clone()
@@ -545,7 +530,7 @@ fn quota_label(payload: &BrowserQuotaPayload) -> String {
 #[cfg(not(target_os = "macos"))]
 fn render_native_menu(app: &tauri::AppHandle) {
     if let Some(tray) = app.tray_by_id("quota") {
-        let snapshots = get_quota_snapshots(app.state::<QuotaState>());
+        let snapshots = get_quota_snapshots(app.clone());
         let text = snapshots
             .first()
             .map(|p| {
@@ -557,19 +542,13 @@ fn render_native_menu(app: &tauri::AppHandle) {
             })
             .unwrap_or_else(|| "Quota Codex · Quotas indisponibles".into());
         let _ = tray.set_tooltip(Some(text));
+        if let Ok(menu) = desktop_menu(app) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        let _ = tray.set_icon(Some(tray_percentage::icon(
+            snapshots.first().map(|p| p.remaining.min(100)),
+        )));
     }
-}
-
-fn mark_browser_disconnected(app: &tauri::AppHandle) {
-    let was_connected = LAST_BROWSER_MESSAGE_AT.swap(0, Ordering::AcqRel) > 0;
-    if !was_connected {
-        return;
-    }
-
-    if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
-        snapshots.browser.clear();
-    }
-    publish_quotas(app);
 }
 
 #[cfg(target_os = "macos")]
@@ -679,33 +658,76 @@ fn show_dashboard(app: &tauri::AppHandle) {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let menu = Menu::new(app)?;
+    let rows = get_quota_snapshots(app.clone());
+    if rows.is_empty() {
+        menu.append(&MenuItem::new(
+            app,
+            "Quotas indisponibles",
+            false,
+            None::<&str>,
+        )?)?;
+    }
+    for row in rows {
+        menu.append(&MenuItem::new(
+            app,
+            format!(
+                "{} · {} % restants",
+                quota_label(&row),
+                row.remaining.min(100)
+            ),
+            false,
+            None::<&str>,
+        )?)?;
+    }
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    for (id, title) in [
+        ("show", "Afficher les quotas"),
+        ("refresh", "Actualiser les quotas"),
+        ("settings", "Réglages d’actualisation…"),
+        ("usage", "Voir les détails sur Codex…"),
+        ("update", "Vérifier les mises à jour…"),
+        ("quit", "Quitter"),
+    ] {
+        menu.append(&MenuItem::with_id(app, id, title, true, None::<&str>)?)?;
+    }
+    menu.append(&MenuItem::new(
+        app,
+        format!("Quota Codex v{}", app.package_info().version),
+        false,
+        None::<&str>,
+    )?)?;
+    Ok(menu)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri::{
-        menu::{Menu, MenuItem},
-        tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    };
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let window = app
         .get_webview_window("main")
         .expect("main window was created");
-    let show = MenuItem::with_id(app, "show", "Afficher les quotas", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "Actualiser les quotas", true, None::<&str>)?;
-    let usage = MenuItem::with_id(app, "usage", "Ouvrir Codex", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &refresh, &usage, &quit])?;
+    let menu = desktop_menu(app.handle())?;
     let tray = TrayIconBuilder::with_id("quota")
-        .icon(tauri::image::Image::from_bytes(include_bytes!(
-            "../icons/32x32.png"
-        ))?)
+        .icon(tray_percentage::icon(None))
         .tooltip("Quota Codex · En attente des quotas")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_dashboard(app),
+            "settings" => open_refresh_settings(app),
             "refresh" => {
                 request_quota_refresh(app.clone());
             }
             "usage" => {
-                let _ = setup::open_selected_usage(app.clone());
+                let _ = open_usage_details(app.clone());
+            }
+            "update" => {
+                tauri::async_runtime::spawn(check_and_install_update(
+                    app.clone(),
+                    UpdateCheckMode::Interactive,
+                ));
             }
             "quit" => app.exit(0),
             _ => {}
@@ -744,138 +766,6 @@ fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn start_browser_bridge(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        let Ok(server) = Server::http(BRIDGE_ADDRESS) else {
-            let message = format!("Le port {BRIDGE_ADDRESS} est indisponible. Ferme les autres instances de Quota Codex puis relance l’application.");
-            eprintln!("{message}");
-            if let Ok(mut error) = BRIDGE_ERROR.lock() {
-                *error = Some(message);
-            }
-            return;
-        };
-
-        for mut request in server.incoming_requests() {
-            let cors =
-                Header::from_bytes("Access-Control-Allow-Origin", "*").expect("valid CORS header");
-            let content_type = Header::from_bytes("Content-Type", "application/json")
-                .expect("valid content type header");
-
-            if request.method() == &Method::Options {
-                let response = Response::empty(204)
-                    .with_header(cors)
-                    .with_header(
-                        Header::from_bytes("Access-Control-Allow-Methods", "POST, OPTIONS")
-                            .expect("valid methods header"),
-                    )
-                    .with_header(
-                        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type")
-                            .expect("valid headers header"),
-                    );
-                let _ = request.respond(response);
-                continue;
-            }
-
-            if request.method() == &Method::Get && request.url() == "/refresh" {
-                let refresh_token = REFRESH_TOKEN.load(Ordering::Relaxed);
-                let response = Response::from_string(
-                    serde_json::json!({ "refreshToken": refresh_token }).to_string(),
-                )
-                .with_header(cors)
-                .with_header(content_type);
-                let _ = request.respond(response);
-                continue;
-            }
-
-            if request.method() == &Method::Post && request.url() == "/connection" {
-                let mut body = String::new();
-                let payload = request
-                    .as_reader()
-                    .read_to_string(&mut body)
-                    .ok()
-                    .and_then(|_| serde_json::from_str::<BrowserConnectionPayload>(&body).ok());
-
-                if let Some(payload) = payload {
-                    LAST_EXTENSION_MESSAGE_AT.store(unix_timestamp_secs(), Ordering::Release);
-                    if payload.connected {
-                        mark_browser_connected();
-                    } else {
-                        mark_browser_disconnected(&app);
-                    }
-                    let response = Response::from_string("{\"ok\":true}")
-                        .with_header(cors)
-                        .with_header(content_type);
-                    let _ = request.respond(response);
-                } else {
-                    let response = Response::from_string("{\"ok\":false}")
-                        .with_status_code(400)
-                        .with_header(cors)
-                        .with_header(content_type);
-                    let _ = request.respond(response);
-                }
-                continue;
-            }
-
-            if request.method() != &Method::Post || request.url() != "/quota" {
-                let response = Response::from_string("Not found")
-                    .with_status_code(404)
-                    .with_header(cors);
-                let _ = request.respond(response);
-                continue;
-            }
-
-            let mut body = String::new();
-            let parsed = request
-                .as_reader()
-                .read_to_string(&mut body)
-                .ok()
-                .and_then(|_| serde_json::from_str::<BrowserQuotaPayload>(&body).ok());
-
-            if let Some(payload) = parsed.filter(|payload| payload.limit > 0) {
-                LAST_EXTENSION_MESSAGE_AT.store(unix_timestamp_secs(), Ordering::Release);
-                mark_browser_connected();
-                if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
-                    snapshots
-                        .browser
-                        .insert(payload.period.clone(), payload.clone());
-                }
-
-                publish_quotas(&app);
-                let response = Response::from_string("{\"ok\":true}")
-                    .with_header(cors)
-                    .with_header(content_type);
-                let _ = request.respond(response);
-            } else {
-                let response = Response::from_string("{\"ok\":false}")
-                    .with_status_code(400)
-                    .with_header(cors)
-                    .with_header(content_type);
-                let _ = request.respond(response);
-            }
-        }
-    });
-}
-
-fn start_connection_watchdog(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        let last_message_at = LAST_BROWSER_MESSAGE_AT.load(Ordering::Acquire);
-        if last_message_at == 0 || connection_is_recent_at(last_message_at, unix_timestamp_secs()) {
-            continue;
-        }
-
-        if LAST_BROWSER_MESSAGE_AT
-            .compare_exchange(last_message_at, 0, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
-                snapshots.browser.clear();
-            }
-            publish_quotas(&app);
-        }
-    });
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -886,12 +776,9 @@ pub fn run() {
             get_platform,
             get_quota_snapshots,
             request_quota_refresh,
-            get_connection_status,
-            setup::get_browser_setup,
-            setup::reveal_extension_folder,
-            setup::open_browser_setup,
-            setup::open_selected_usage,
+            open_usage_details,
             codex::get_codex_status,
+            codex::set_refresh_settings,
             codex::start_codex_login,
             codex::cancel_codex_login,
             codex::set_codex_path,
@@ -899,9 +786,6 @@ pub fn run() {
             codex::open_codex_login
         ])
         .setup(|app| {
-            if let Err(error) = setup::prepare_extension(app.handle()) {
-                eprintln!("Impossible de préparer l’extension : {error}");
-            }
             #[cfg(target_os = "macos")]
             let _ = APP_HANDLE.set(app.handle().clone());
 
@@ -947,8 +831,6 @@ pub fn run() {
             build_desktop(app)?;
 
             app.manage(codex::start(app.handle().clone()));
-            start_browser_bridge(app.handle().clone());
-            start_connection_watchdog(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -967,46 +849,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_source_wins_and_browser_disconnect_does_not_clear_it() {
-        let rows = codex::normalize(&serde_json::json!({"rateLimits":{"secondary":{"usedPercent":59,"windowDurationMins":10080}}})).unwrap();
-        let mut data = QuotaData::default();
-        let mut browser = rows[0].clone();
-        browser.source = "browser".into();
-        browser.remaining = 5;
-        data.browser.insert("weekly".into(), browser);
-        data.codex = Some(rows);
-        assert_eq!(data.effective()[0].remaining, 41);
-        data.browser.clear();
-        assert_eq!(data.effective()[0].source, "codex");
+    fn plus_switches_from_five_hour_to_reserve() {
+        let mut rows = codex::normalize(&serde_json::json!({"rateLimitsByLimitId": {
+            "codex": {"primary": {"usedPercent":20,"windowDurationMins":300}, "secondary":{"usedPercent":10,"windowDurationMins":10080}},
+            "luna-reserve": {"primary":{"usedPercent":30,"windowDurationMins":10080}}
+        }})).unwrap();
+        assert_eq!(visible_quotas(rows.clone(), Some("plus"))[0].remaining, 80);
+        assert_eq!(visible_quotas(rows.clone(), Some("plus")).len(), 1);
+        assert_eq!(visible_quotas(rows.clone(), Some("pro")).len(), 3);
+        rows[0].remaining = 0;
+        let selected = visible_quotas(rows.clone(), Some("plus"));
+        assert_eq!(selected.len(), 1);
+        assert!(selected[0].period.contains("luna-reserve"));
+        rows[0].remaining = 1;
+        assert_eq!(visible_quotas(rows, Some("plus"))[0].remaining, 1);
     }
-
     #[test]
-    fn authoritative_empty_hides_fallback_until_primary_fails() {
-        let mut data = QuotaData::default();
-        let rows =
-            codex::normalize(&serde_json::json!({"rateLimits":{"primary":{"usedPercent":25}}}))
-                .unwrap();
-        data.browser.insert("five-hour".into(), rows[0].clone());
-        data.codex = Some(Vec::new());
-        assert!(data.effective().is_empty());
-        data.codex = None;
-        assert_eq!(data.effective().len(), 1);
-    }
-
-    #[test]
-    fn browser_connection_expires_after_timeout() {
-        assert!(connection_is_recent_at(
-            100,
-            100 + BROWSER_CONNECTION_TIMEOUT_SECS
-        ));
-        assert!(!connection_is_recent_at(
-            100,
-            101 + BROWSER_CONNECTION_TIMEOUT_SECS
-        ));
-    }
-
-    #[test]
-    fn missing_browser_message_is_disconnected() {
-        assert!(!connection_is_recent_at(0, 100));
+    fn missing_reserve_is_not_fabricated() {
+        let rows = codex::normalize(&serde_json::json!({"rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":300}}})).unwrap();
+        assert!(visible_quotas(rows, Some("plus")).is_empty());
     }
 }

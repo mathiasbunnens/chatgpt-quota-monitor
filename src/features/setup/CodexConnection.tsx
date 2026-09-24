@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
 import type { CodexStatus } from "../quota/types";
-import BrowserSetup from "./BrowserSetup";
 import "./setup.scss";
 
 type Props = { status: CodexStatus | null; onChange: () => void };
@@ -9,14 +8,13 @@ export default function CodexConnection({ status, onChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
-  const [fallback, setFallback] = useState(false);
   const run = async (command: string, args?: Record<string, unknown>) => {
     setError(null); setBusy(true);
     try { await invoke(command, args); onChange(); }
     catch (cause) { setError(String(cause)); }
     finally { setBusy(false); }
   };
-  return <section className="browser-setup codex-connection" aria-labelledby="codex-title">
+  return <section className="connection-setup codex-connection" aria-labelledby="codex-title">
     <h2 id="codex-title">Connexion directe à Codex</h2>
     <p>Les quotas sont lus automatiquement depuis Codex. Aucune extension ni page ouverte n’est nécessaire après connexion.</p>
     <p role="status">{status?.message || "Recherche de Codex…"}</p>
@@ -45,10 +43,6 @@ export default function CodexConnection({ status, onChange }: Props) {
         <button disabled={busy} type="button" onClick={() => { setPath(""); void run("set_codex_path", { path: "" }); }}>Détection automatique</button>
       </form>
     </details>
-    <details onToggle={(event) => setFallback(event.currentTarget.open)}>
-      <summary>Solution de secours : extension navigateur</summary>
-      <p>Utilisée uniquement lorsque les quotas directs sont indisponibles. Une réponse Codex valide reste prioritaire.</p>
-      {fallback && <BrowserSetup />}
-    </details>
+
   </section>;
 }

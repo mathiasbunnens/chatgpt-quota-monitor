@@ -1,13 +1,19 @@
 // Read-only capability probe. Never starts a thread, turn, or login.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { tmpdir } from "node:os";
 
 const executable = process.argv[2] || "codex";
 const child = spawn(executable, ["app-server"], {
-  stdio: ["pipe", "pipe", "ignore"], windowsHide: true,
+  stdio: ["pipe", "pipe", "ignore"], windowsHide: true, cwd: tmpdir(),
 });
 const lines = createInterface({ input: child.stdout });
 let finished = false;
+let outputBytes = 0;
+child.stdout.on("data", (chunk) => {
+  outputBytes += chunk.length;
+  if (outputBytes > 1_048_576) finish({ ok: false, reason: "output-too-large" }, 1);
+});
 function finish(result, code = 0) {
   if (finished) return;
   finished = true;

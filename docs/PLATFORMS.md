@@ -1,6 +1,6 @@
 # Windows, Linux and macOS
 
-All platforms now use the same direct Codex App Server provider. The browser extension is optional fallback. Codex CLI must be installed separately; the monitor discovers it or accepts an explicit executable path. Quota reads never start an agent turn.
+All platforms now use the same direct Codex App Server provider. There is no browser retrieval or local HTTP listener. Codex CLI must be installed separately; the monitor discovers it or accepts an explicit executable path. Quota reads never start an agent turn.
 
 ## Desktop behavior
 
@@ -8,7 +8,7 @@ All platforms now use the same direct Codex App Server provider. The browser ext
 - Linux: the dashboard works without an AppIndicator host. Closing exits; minimize to keep monitoring. The tray menu can reopen the window where supported.
 - macOS: the AppKit menu renders the returned quota windows dynamically and opens the dashboard for account setup. It no longer starts Brave when disconnected. Closing the dashboard leaves the menu active.
 
-The details action opens the Codex usage page in the selected browser, falling back to the default browser. Monitoring does not depend on that page.
+The details action opens the Codex usage page in the default browser. Monitoring does not depend on that page.
 
 ## Development prerequisites
 
@@ -38,16 +38,18 @@ If Rust reports hard-link failures on a Windows drive, run `$env:CARGO_INCREMENT
 
 ## Provider behavior
 
-The monitor starts `codex app-server` over private stdio, reads account state and quota windows, and polls every 60 seconds. Failed reads remove direct data and retry with backoff up to four minutes. Manual refresh retries immediately. Codex owns cached credentials and token refresh. New authorization is started only by an explicit sign-in action; device-code sign-in is available when enabled for the account.
+The monitor starts `codex app-server` over private stdio, reads account state and quota windows, and polls dynamically based on plan and estimated open instances (see README). Failed reads remove direct data and retry with backoff of at least the configured interval. Manual refresh retries immediately. Codex owns cached credentials and token refresh. New authorization is started only by an explicit sign-in action; device-code sign-in is available when enabled for the account.
 
-The direct response is authoritative, including an empty list of windows. Browser updates and disconnects never overwrite it. On direct-source failure, available browser data is explicitly marked as fallback. Quota categories and durations come from the response; the dashboard does not require a five-hour limit.
+The direct response is authoritative, including an empty list of windows. Quota categories and durations come from the response; missing windows are never fabricated.
 
 ## Packaging and updates
 
-The extension files are embedded and extracted to the stable per-user `browser-extension` directory. Browser installation remains manual and is only needed for fallback. Codex itself is not bundled. Standard install directories and PATH are searched; `QUOTA_CODEX_BINARY` or the saved UI path can select a compatible binary. A saved path takes precedence over the environment variable. Windows requires a native `.exe`.
+Codex itself is not bundled. Standard install directories and PATH are searched; QUOTA_CODEX_BINARY or the saved UI path can select a compatible binary. A saved path takes precedence. Only choose a trusted local executable. Windows requires a native .exe.
 
 The updater still points to the original project. Configure your own endpoint and signing key before distributing a fork. Uninstalling the monitor does not uninstall Codex or sign out its shared account.
 
 ## Manual release checks
 
-Verify startup with an existing login, missing executable, fresh login and cancellation, weekly-only and multiple-bucket responses, network failure/recovery, details-page opening, browser fallback, quitting and child-process cleanup, light/dark mode, and resizing. On Linux also test without a tray host. On macOS verify dynamic native menus and dashboard reopening.
+Verify startup with an existing login, missing executable, fresh login and cancellation, weekly-only and multiple-bucket responses, network failure/recovery, details-page opening, quitting and child-process cleanup, light/dark mode, and resizing. On Linux also test without a tray host. On macOS verify dynamic native menus and dashboard reopening.
+
+Process detection counts same-user top-level Codex native process trees, excluding this monitor and its descendants. It does not count chats, read command lines, or prove a turn is running. Unrecognized wrappers and remote instances may be missed; permission failures fall back to plan defaults.

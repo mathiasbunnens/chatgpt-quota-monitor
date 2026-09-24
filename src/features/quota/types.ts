@@ -1,4 +1,4 @@
-export type QuotaSource = "browser" | "codex";
+export type QuotaSource = "codex";
 export type QuotaPeriod = string;
 export type QuotaSnapshot = {
   model: string;
@@ -18,4 +18,8 @@ export type CodexStatus = {
   lastChecked: string | null;
   authUrl: string | null;
   userCode: string | null;
+  planType: string | null;
+  activeInstances: number | null;
+  refreshSeconds: number;
+  refreshSettings: { customSeconds: number | null };
 };

@@ -1,0 +1,42 @@
+name: Dependency checks
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+  push:
+    paths:
+      - package-lock.json
+      - src-tauri/Cargo.lock
+      - .github/workflows/dependencies.yml
+  pull_request:
+    paths:
+      - package-lock.json
+      - src-tauri/Cargo.lock
+      - .github/workflows/dependencies.yml
+permissions:
+  contents: read
+concurrency:
+  group: dependencies-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Check npm advisories
+        run: npm audit
+      - name: Install Rust auditor
+        if: success() || failure()
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Check Rust advisories (includes all locked targets)
+        if: success() || failure()
+        run: cargo audit --file src-tauri/Cargo.lock
+      - name: Include known findings and review limitations
+        if: always()
+        run: cat docs/SECURITY_REVIEW.md >> "$GITHUB_STEP_SUMMARY"

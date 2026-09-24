@@ -1,14 +1,27 @@
 # Quota Codex
 
-Application de suivi des quotas Codex pour **Windows, Linux et macOS**. Codex App Server est la source principale : aucune extension ni page ouverte n’est nécessaire après connexion.
+[![Desktop checks](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml/badge.svg?branch=multi_platform_support)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml?query=branch%3Amulti_platform_support)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-555)](docs/PLATFORMS.md)
+[![Built with Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)](src-tauri/Cargo.toml)
+
+**A desktop Codex quota monitor with tray percentages, direct account sync, and activity-aware refresh.**
+
+[Installation](docs/INSTALLATION.md) · [Plateformes](docs/PLATFORMS.md) · [Contribuer](CONTRIBUTING.md) · [Sécurité](SECURITY.md) · [Signaler un problème](https://github.com/mathiasbunnens/chatgpt-quota-monitor/issues/new/choose)
+
+> Cette branche (`multi_platform_support`) contient la version multiplateforme en développement. Le badge CI concerne cette branche ; les anciennes releases et `main` peuvent différer.
+
+Application de suivi des quotas Codex pour **Windows, Linux et macOS**. Codex App Server est la seule source : aucune extension ni page ouverte n’est nécessaire après connexion.
 
 - Détection de Codex et réutilisation de sa connexion ChatGPT.
 - Connexion depuis l’application, avec option de code pour un autre appareil.
 - Affichage de toutes les fenêtres renvoyées, même si seule une limite hebdomadaire est disponible.
-- Actualisation toutes les 60 secondes et reconnexion avec temporisation après erreur.
+- Actualisation dynamique selon le plan et le nombre estimé d’instances Codex : au repos 5 min ; pour Plus/Pro/équipe, 60 s (1), 30 s (2–3), 15 s (4+). Free/inconnu : 120/60/30 s. Choix propres à cette application.
+- Panneau latéral Réglages : mode dynamique ou intervalle personnalisé (30 s à 10 min), conservé au redémarrage. Les erreurs entraînent une temporisation.
 - Bouton **Voir les détails sur Codex** pour ouvrir la page d’utilisation.
-- Menu natif macOS ; tableau de bord et zone de notification sous Windows/Linux.
-- Extension Chromium facultative comme source de secours.
+- Interface commune inspirée de macOS, modes clair/sombre et mêmes actions dans les menus Windows, Linux et macOS. Les menus natifs conservent le rendu du système.
+- Pour Plus, la fenêtre de 5 heures est prioritaire et masque la réserve. À 0 %, elle disparaît au profit de la réserve lorsqu’elle est publiée par Codex. Les comptes sans fenêtre de 5 heures affichent les fenêtres disponibles ; une limite hebdomadaire n’est jamais renommée « réserve ».
+- Pourcentage dans la barre macOS et badge numérique dans la zone de notification Windows/Linux ; le survol précise la limite suivie. La disponibilité de la zone de notification Linux dépend de l’environnement de bureau.
 
 ## Installation
 
@@ -24,7 +37,7 @@ Les paquets de cette branche seront disponibles sur GitHub après une release co
 
 Codex gère les identifiants et le renouvellement des jetons. Quota Codex demande uniquement l’état du compte et les quotas, sans conversation ni tâche d’agent. L’interface ne reçoit aucun jeton du compte. Une connexion ChatGPT est nécessaire ; une clé API seule ne fournit pas les quotas d’abonnement.
 
-L’extension de secours lit uniquement les valeurs visibles et les transmet à `127.0.0.1:48721`. Elle ne lit ni cookies ni mots de passe. Elle ne remplace jamais une réponse Codex valide. Les limites absentes ne sont pas interprétées comme illimitées.
+Aucun serveur HTTP local ni collecte par extension. Les limites absentes ne sont pas interprétées comme illimitées.
 
 ## Développement
 
@@ -47,8 +60,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_codex_account_read --
 ## Architecture
 
 - `src-tauri/src/codex.rs` : processus Codex, connexion et protocole stdio.
-- `src-tauri/src/lib.rs` : priorité des sources, menus, fenêtres et bridge de secours.
-- `src-tauri/src/setup.rs` : navigateur, page de détails et extension facultative.
+- `src-tauri/src/lib.rs` : quotas, menus, fenêtres et lien de détails.
+- `src-tauri/src/activity.rs` : estimation locale des instances par métadonnées de processus.
 - `src/` : tableau de bord et connexion sur les trois plateformes.
 - `.github/workflows/` : vérifications et paquets multiplateformes.
 
@@ -57,3 +70,7 @@ Les mises à jour pointent encore vers le dépôt d’origine. Configure une URL
 ## Licence
 
 [MIT](LICENSE)
+
+## Sécurité
+
+Voir [le rapport de revue](docs/SECURITY_REVIEW.md) pour le périmètre, les correctifs et les limites de vérification. Les anciennes extensions installées peuvent être supprimées manuellement ; elles ne sont plus utilisées.

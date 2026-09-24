@@ -22,7 +22,7 @@ Repeat with `node scripts/probe-codex-quota.mjs <path-to-codex-executable>`. The
 - Let Codex manage credentials. Prefer the existing user session; offer its login flow only when required. Do not scrape browser profiles or copy tokens into the frontend.
 - Initialize, inspect account state, then fetch quotas. Poll conservatively with backoff, also handle notifications and sleep/resume. Never start an agent turn for quota monitoring.
 - Render returned windows and bucket names dynamically. The dashboard accepts weekly-only responses and no longer requires a five-hour snapshot. Show missing/stale/error states explicitly.
-- Keep the extension as an optional fallback while this provider is validated.
+- Browser retrieval, its extension and its local HTTP bridge have been removed on this branch.
 - Stop the owned companion process when the monitor exits, isolate logs from credentials, and validate packaged Windows and Linux builds.
 
 ## Automation boundary
