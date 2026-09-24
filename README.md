@@ -1,7 +1,8 @@
 # Quota Codex
 
-[![Desktop checks](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml/badge.svg?branch=multi_platform_support)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml?query=branch%3Amulti_platform_support)
+[![Desktop checks](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml/badge.svg?branch=dev)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml?query=branch%3Adev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/mathiasbunnens/chatgpt-quota-monitor)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-555)](docs/PLATFORMS.md)
 [![Built with Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)](src-tauri/Cargo.toml)
 
@@ -9,7 +10,7 @@
 
 [Installation](docs/INSTALLATION.md) · [Plateformes](docs/PLATFORMS.md) · [Contribuer](CONTRIBUTING.md) · [Sécurité](SECURITY.md) · [Signaler un problème](https://github.com/mathiasbunnens/chatgpt-quota-monitor/issues/new/choose)
 
-> Cette branche (`multi_platform_support`) contient la version multiplateforme en développement. Le badge CI concerne cette branche ; les anciennes releases et `main` peuvent différer.
+> Cette branche (`dev`) contient la version multiplateforme en développement. Le badge CI concerne les pull requests vers `main` ; les anciennes releases et `main` peuvent différer.
 
 Application de suivi des quotas Codex pour **Windows, Linux et macOS**. Codex App Server est la seule source : aucune extension ni page ouverte n’est nécessaire après connexion.
 
