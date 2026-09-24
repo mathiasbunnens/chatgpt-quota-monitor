@@ -19,7 +19,8 @@ Application de suivi des quotas Codex pour **Windows, Linux et macOS**. Codex Ap
 - Actualisation dynamique selon le plan et le nombre estimé d’instances Codex : au repos 5 min ; pour Plus/Pro/équipe, 60 s (1), 30 s (2–3), 15 s (4+). Free/inconnu : 120/60/30 s. Choix propres à cette application.
 - Panneau latéral Réglages : mode dynamique ou intervalle personnalisé (30 s à 10 min), conservé au redémarrage. Les erreurs entraînent une temporisation.
 - Bouton **Voir les détails sur Codex** pour ouvrir la page d’utilisation.
-- Interface commune inspirée de macOS, modes clair/sombre et mêmes actions dans les menus Windows, Linux et macOS. Les menus natifs conservent le rendu du système.
+- Tableau de bord sur Windows/Linux et application strictement limitée au menu natif sur macOS. L’action **Connexion** n’apparaît sur Mac que lorsqu’un compte doit être connecté.
+- Mise à jour dans une popup unique : disponibilité, téléchargement avec progression, puis **Quitter et relancer**.
 - Pour Plus, la fenêtre de 5 heures est prioritaire et masque la réserve. À 0 %, elle disparaît au profit de la réserve lorsqu’elle est publiée par Codex. Les comptes sans fenêtre de 5 heures affichent les fenêtres disponibles ; une limite hebdomadaire n’est jamais renommée « réserve ».
 - Pourcentage dans la barre macOS et badge numérique dans la zone de notification Windows/Linux ; le survol précise la limite suivie. La disponibilité de la zone de notification Linux dépend de l’environnement de bureau.
 
@@ -62,7 +63,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_codex_account_read --
 - `src-tauri/src/codex.rs` : processus Codex, connexion et protocole stdio.
 - `src-tauri/src/lib.rs` : quotas, menus, fenêtres et lien de détails.
 - `src-tauri/src/activity.rs` : estimation locale des instances par métadonnées de processus.
-- `src/` : tableau de bord et connexion sur les trois plateformes.
+- `src/` : tableau de bord Windows/Linux et popup de mise à jour multiplateforme.
 - `.github/workflows/` : vérifications et paquets multiplateformes.
 
 Les mises à jour pointent encore vers le dépôt d’origine. Configure une URL et une clé de signature propres avant de distribuer un fork.

@@ -6,7 +6,7 @@ All platforms now use the same direct Codex App Server provider. There is no bro
 
 - Windows: a normal dashboard and tray menu. Left-click opens the dashboard; right-click shows actions. Closing hides the window when the tray is available. Quit exits and stops the owned Codex process.
 - Linux: the dashboard works without an AppIndicator host. Closing exits; minimize to keep monitoring. The tray menu can reopen the window where supported.
-- macOS: the AppKit menu renders the returned quota windows dynamically and opens the dashboard for account setup. It no longer starts Brave when disconnected. Closing the dashboard leaves the menu active.
+- macOS: the app is menu-bar only. AppKit renders the returned quota windows dynamically, and a Connection item appears only while the account is disconnected. No dashboard window is created.
 
 The details action opens the Codex usage page in the default browser. Monitoring does not depend on that page.
 
@@ -46,10 +46,10 @@ The direct response is authoritative, including an empty list of windows. Quota 
 
 Codex itself is not bundled. Standard install directories and PATH are searched; QUOTA_CODEX_BINARY or the saved UI path can select a compatible binary. A saved path takes precedence. Only choose a trusted local executable. Windows requires a native .exe.
 
-The updater still points to the original project. Configure your own endpoint and signing key before distributing a fork. Uninstalling the monitor does not uninstall Codex or sign out its shared account.
+Update checks use one dedicated popup. When a release is available, the same popup shows download progress and then offers Quit and restart. The updater still points to the original project. Configure your own endpoint and signing key before distributing a fork. Uninstalling the monitor does not uninstall Codex or sign out its shared account.
 
 ## Manual release checks
 
-Verify startup with an existing login, missing executable, fresh login and cancellation, weekly-only and multiple-bucket responses, network failure/recovery, details-page opening, quitting and child-process cleanup, light/dark mode, and resizing. On Linux also test without a tray host. On macOS verify dynamic native menus and dashboard reopening.
+Verify startup with an existing login, missing executable, fresh login and cancellation, weekly-only and multiple-bucket responses, network failure/recovery, details-page opening, quitting and child-process cleanup, light/dark mode, and resizing. On Linux also test without a tray host. On macOS verify menu-only startup, the conditional Connection item, and the updater popup.
 
 Process detection counts same-user top-level Codex native process trees, excluding this monitor and its descendants. It does not count chats, read command lines, or prove a turn is running. Unrecognized wrappers and remote instances may be missed; permission failures fall back to plan defaults.

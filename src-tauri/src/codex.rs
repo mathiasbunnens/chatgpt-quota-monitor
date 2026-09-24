@@ -159,6 +159,9 @@ impl Provider {
     pub fn refresh(&self) {
         let _ = self.tx.send(Action::Refresh);
     }
+    pub fn login(&self, device: bool) {
+        let _ = self.tx.send(Action::Login(device));
+    }
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::Release);
         self.shared.kill_child();
@@ -456,8 +459,8 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
             next_activity = Instant::now() + Duration::from_secs(10);
         }
         if matches!(action, Some(Action::Reconnect)) {
-            set_codex_snapshots(&app, None);
             shared.status("starting", "Reconnexion à Codex…");
+            set_codex_snapshots(&app, None);
             session = None;
             login = None;
             next_poll = Instant::now();
@@ -598,7 +601,6 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
         match result {
             Ok(Some(snapshots)) => {
                 let empty = snapshots.is_empty();
-                set_codex_snapshots(&app, Some(snapshots));
                 shared.status(
                     "ready",
                     if empty {
@@ -607,21 +609,22 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                         "Quotas synchronisés directement avec Codex."
                     },
                 );
+                set_codex_snapshots(&app, Some(snapshots));
                 shared.status.lock().unwrap().last_checked = Some(chrono::Utc::now().to_rfc3339());
                 failures = 0;
                 next_poll = Instant::now()
                     + Duration::from_secs(shared.status.lock().unwrap().refresh_seconds);
             }
             Ok(None) => {
-                set_codex_snapshots(&app, None);
                 shared.status("signed_out", "Connecte un compte ChatGPT à Codex. Une clé API ne fournit pas les quotas de ton abonnement.");
+                set_codex_snapshots(&app, None);
                 next_poll = Instant::now() + Duration::from_secs(60);
                 // A new session picks up an external CLI login on the next attempt.
                 session = None;
             }
             Err(error) => {
-                set_codex_snapshots(&app, None);
                 shared.status("error", &error);
+                set_codex_snapshots(&app, None);
                 failures = (failures + 1).min(4);
                 session = None;
                 next_poll = Instant::now()
