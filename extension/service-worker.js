@@ -73,6 +73,7 @@ chrome.runtime.onInstalled.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
+  void reloadUsagePages().catch(() => undefined);
 });
 
 chrome.runtime.onStartup.addListener(() => {

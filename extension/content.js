@@ -89,8 +89,18 @@ function collectStatusLimits() {
 }
 
 function publishStatus() {
+  const runtime = globalThis.chrome?.runtime;
+  if (!runtime?.id || typeof runtime.sendMessage !== "function") return;
+
   collectStatusLimits().forEach((payload) => {
-    chrome.runtime.sendMessage({ type: SOURCE, payload });
+    try {
+      const result = runtime.sendMessage({ type: SOURCE, payload });
+      if (result && typeof result.catch === "function") {
+        void result.catch(() => undefined);
+      }
+    } catch {
+      // Reloading the extension invalidates the previous content-script context.
+    }
   });
 }
 
