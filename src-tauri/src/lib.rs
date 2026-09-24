@@ -383,6 +383,33 @@ fn reset_label(payload: &BrowserQuotaPayload) -> String {
         .unwrap_or_else(|| "--".to_string())
 }
 
+fn quota_color_transition(percentage: u32) -> (&'static str, &'static str, f64) {
+    match percentage {
+        0..=20 => ("red", "red", 0.0),
+        21..=40 => ("red", "orange", f64::from(percentage - 20) / 20.0),
+        41..=60 => ("orange", "green", f64::from(percentage - 40) / 20.0),
+        _ => ("green", "green", 0.0),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn quota_color(percentage: u32) -> Retained<NSColor> {
+    let (from, to, fraction) = quota_color_transition(percentage);
+    let color = |name| match name {
+        "red" => NSColor::systemRedColor(),
+        "orange" => NSColor::systemOrangeColor(),
+        _ => NSColor::systemGreenColor(),
+    };
+    let from_color = color(from);
+    if from == to {
+        return from_color;
+    }
+
+    from_color
+        .blendedColorWithFraction_ofColor(fraction, &color(to))
+        .unwrap_or(from_color)
+}
+
 #[cfg(target_os = "macos")]
 fn update_native_menu(app: &tauri::AppHandle, payload: &BrowserQuotaPayload) {
     let native_menu = app
@@ -416,13 +443,7 @@ fn update_native_menu(app: &tauri::AppHandle, payload: &BrowserQuotaPayload) {
             PROGRESS_WIDTH * f64::from(percentage) / 100.0,
             8.0,
         ));
-        let color = if percentage <= 20 {
-            NSColor::systemRedColor()
-        } else if percentage <= 40 {
-            NSColor::systemOrangeColor()
-        } else {
-            NSColor::systemGreenColor()
-        };
+        let color = quota_color(percentage);
         fill.setFillColor(&color);
 
         if update_status {
@@ -804,5 +825,15 @@ mod tests {
     #[test]
     fn missing_browser_message_is_disconnected() {
         assert!(!connection_is_recent_at(0, 100));
+    }
+
+    #[test]
+    fn quota_color_blends_between_thresholds() {
+        assert_eq!(quota_color_transition(20), ("red", "red", 0.0));
+        assert_eq!(quota_color_transition(30), ("red", "orange", 0.5));
+        assert_eq!(quota_color_transition(40), ("red", "orange", 1.0));
+        assert_eq!(quota_color_transition(50), ("orange", "green", 0.5));
+        assert_eq!(quota_color_transition(60), ("orange", "green", 1.0));
+        assert_eq!(quota_color_transition(80), ("green", "green", 0.0));
     }
 }

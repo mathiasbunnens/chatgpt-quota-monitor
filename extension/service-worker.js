@@ -5,7 +5,14 @@ const REFRESH_ALARM = "quota-codex-refresh";
 const REFRESH_TOKEN_KEY = "desktopRefreshToken";
 const BACKGROUND_USAGE_TAB_KEY = "backgroundUsageTabId";
 const LAST_BACKGROUND_RELOAD_KEY = "lastBackgroundReloadAt";
-const BACKGROUND_RELOAD_INTERVAL_MS = 2 * 60 * 1_000;
+const LAST_QUOTA_CHANGE_AT_KEY = "lastQuotaChangeAt";
+const QUOTA_FINGERPRINTS_KEY = "quotaFingerprints";
+const ACTIVE_RELOAD_INTERVAL_MS = 60_000;
+const DEFAULT_RELOAD_INTERVAL_MS = 2 * 60_000;
+const RECENT_RELOAD_INTERVAL_MS = 5 * 60_000;
+const IDLE_RELOAD_INTERVAL_MS = 10 * 60_000;
+const ACTIVE_QUOTA_WINDOW_MS = 10 * 60_000;
+const RECENT_QUOTA_WINDOW_MS = 30 * 60_000;
 const USAGE_PAGE_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage";
 const USAGE_PAGE_PATTERNS = [
   "https://chatgpt.com/codex/settings/usage*",
@@ -16,6 +23,8 @@ const USAGE_PAGE_PATTERNS = [
 
 let refreshCheckInFlight = false;
 let connectionCheckInFlight = false;
+let backgroundTabCreationInFlight;
+let quotaActivityUpdate = Promise.resolve();
 
 function isUsagePage(url = "") {
   return USAGE_PAGE_PATTERNS.some((pattern) => url.startsWith(pattern.replace(/\*$/, "")));
@@ -48,6 +57,25 @@ async function rememberBackgroundTab(tab) {
   return chrome.tabs.update(tab.id, { autoDiscardable: false, pinned: true });
 }
 
+async function createBackgroundUsageTab() {
+  try {
+    return await chrome.tabs.create({
+      url: USAGE_PAGE_URL,
+      active: false,
+      pinned: true,
+    });
+  } catch {
+    const browserWindow = await chrome.windows.create({
+      url: USAGE_PAGE_URL,
+      focused: false,
+      state: "minimized",
+    });
+    const [createdTab] = browserWindow.tabs || [];
+    if (!createdTab) throw new Error("Brave did not create the background usage tab");
+    return createdTab;
+  }
+}
+
 async function getBackgroundUsageTab({ createIfMissing = false } = {}) {
   const storedTab = await getStoredBackgroundTab();
   if (storedTab) return storedTab;
@@ -56,12 +84,14 @@ async function getBackgroundUsageTab({ createIfMissing = false } = {}) {
   if (reusableTab) return rememberBackgroundTab(reusableTab);
   if (!createIfMissing) return undefined;
 
-  const createdTab = await chrome.tabs.create({
-    url: USAGE_PAGE_URL,
-    active: false,
-    pinned: true,
-  });
-  return rememberBackgroundTab(createdTab);
+  if (!backgroundTabCreationInFlight) {
+    backgroundTabCreationInFlight = createBackgroundUsageTab()
+      .then((createdTab) => rememberBackgroundTab(createdTab))
+      .finally(() => {
+        backgroundTabCreationInFlight = undefined;
+      });
+  }
+  return backgroundTabCreationInFlight;
 }
 
 async function isTabInForeground(tab) {
@@ -86,9 +116,47 @@ async function readUsagePage(tabId) {
 }
 
 async function backgroundReloadIsDue() {
-  const stored = await chrome.storage.local.get(LAST_BACKGROUND_RELOAD_KEY);
+  const stored = await chrome.storage.local.get([
+    LAST_BACKGROUND_RELOAD_KEY,
+    LAST_QUOTA_CHANGE_AT_KEY,
+  ]);
   const lastReloadAt = stored[LAST_BACKGROUND_RELOAD_KEY];
-  return !Number.isFinite(lastReloadAt) || Date.now() - lastReloadAt >= BACKGROUND_RELOAD_INTERVAL_MS;
+  if (!Number.isFinite(lastReloadAt)) return true;
+
+  const lastQuotaChangeAt = stored[LAST_QUOTA_CHANGE_AT_KEY];
+  const timeSinceQuotaChange = Number.isFinite(lastQuotaChangeAt)
+    ? Date.now() - lastQuotaChangeAt
+    : undefined;
+  const reloadInterval =
+    timeSinceQuotaChange === undefined
+      ? DEFAULT_RELOAD_INTERVAL_MS
+      : timeSinceQuotaChange <= ACTIVE_QUOTA_WINDOW_MS
+        ? ACTIVE_RELOAD_INTERVAL_MS
+        : timeSinceQuotaChange <= RECENT_QUOTA_WINDOW_MS
+          ? RECENT_RELOAD_INTERVAL_MS
+          : IDLE_RELOAD_INTERVAL_MS;
+
+  return Date.now() - lastReloadAt >= reloadInterval;
+}
+
+function recordQuotaActivity(payload) {
+  quotaActivityUpdate = quotaActivityUpdate
+    .then(async () => {
+      const stored = await chrome.storage.local.get(QUOTA_FINGERPRINTS_KEY);
+      const fingerprints = stored[QUOTA_FINGERPRINTS_KEY] || {};
+      const fingerprint = `${payload.remaining}:${payload.limit}:${payload.reset_at}`;
+      if (fingerprints[payload.period] === fingerprint) return;
+
+      await chrome.storage.local.set({
+        [QUOTA_FINGERPRINTS_KEY]: {
+          ...fingerprints,
+          [payload.period]: fingerprint,
+        },
+        [LAST_QUOTA_CHANGE_AT_KEY]: Date.now(),
+      });
+    })
+    .catch(() => undefined);
+  return quotaActivityUpdate;
 }
 
 async function reloadUsageTab(tabId) {
@@ -98,11 +166,11 @@ async function reloadUsageTab(tabId) {
 
 async function syncBackgroundUsageTab(options = {}) {
   const tab = await getBackgroundUsageTab(options);
-  if (tab?.id === undefined) return;
+  if (tab?.id === undefined) return false;
 
   if (tab.status === "loading") {
     await chrome.storage.local.set({ [LAST_BACKGROUND_RELOAD_KEY]: Date.now() });
-    return;
+    return true;
   }
 
   const isForeground = await isTabInForeground(tab);
@@ -113,10 +181,11 @@ async function syncBackgroundUsageTab(options = {}) {
 
   if (shouldReload) {
     await reloadUsageTab(tab.id);
-    return;
+    return true;
   }
 
   if (!(await readUsagePage(tab.id))) await reloadUsageTab(tab.id);
+  return true;
 }
 
 async function reportConnectionStatus() {
@@ -152,10 +221,11 @@ async function checkForForcedRefresh() {
     const previousToken = stored[REFRESH_TOKEN_KEY];
     if (previousToken === refreshToken) return;
 
-    await chrome.storage.local.set({ [REFRESH_TOKEN_KEY]: refreshToken });
     if (previousToken !== undefined || refreshToken > 0) {
-      await syncBackgroundUsageTab({ createIfMissing: true, forceReload: true });
+      const synced = await syncBackgroundUsageTab({ createIfMissing: true, forceReload: true });
+      if (!synced) return;
     }
+    await chrome.storage.local.set({ [REFRESH_TOKEN_KEY]: refreshToken });
   } catch {
     // The desktop app may not be running yet.
   } finally {
@@ -174,14 +244,18 @@ chrome.runtime.onInstalled.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
-  void syncBackgroundUsageTab({ forceReload: true }).catch(() => undefined);
+  void syncBackgroundUsageTab({ createIfMissing: true, forceReload: true }).catch(
+    () => undefined,
+  );
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
-  void syncBackgroundUsageTab({ forceReload: true }).catch(() => undefined);
+  void syncBackgroundUsageTab({ createIfMissing: true, forceReload: true }).catch(
+    () => undefined,
+  );
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -209,6 +283,7 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
 void ensureRefreshAlarm();
 void checkForForcedRefresh();
 void reportConnectionStatus();
+void syncBackgroundUsageTab({ createIfMissing: true }).catch(() => undefined);
 setInterval(() => {
   void checkForForcedRefresh();
   void reportConnectionStatus();
@@ -221,6 +296,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: false, reason: "quota-not-detected" });
     return undefined;
   }
+
+  void recordQuotaActivity(message.payload);
 
   fetch(BRIDGE_URL, {
     method: "POST",
