@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, OnceLock,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, State};
 use tiny_http::{Header, Method, Response, Server};
@@ -21,14 +22,16 @@ use objc2::{
 use objc2_app_kit::{
     NSAlert, NSAlertStyle, NSApplication, NSBox, NSBoxType, NSColor, NSFont, NSImage, NSMenu,
     NSMenuDelegate, NSMenuItem, NSStatusBar, NSTextField, NSVariableStatusItemLength, NSView,
-    NSWorkspace,
+    NSWorkspace, NSWorkspaceOpenConfiguration,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
+    MainThreadMarker, NSArray, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString, NSURL,
 };
 
 const BRIDGE_ADDRESS: &str = "127.0.0.1:48721";
+const BROWSER_CONNECTION_TIMEOUT_SECS: u64 = 20;
 #[cfg(target_os = "macos")]
 const PROGRESS_WIDTH: f64 = 248.0;
 
@@ -49,6 +52,11 @@ struct BrowserQuotaPayload {
     source: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct BrowserConnectionPayload {
+    connected: bool,
+}
+
 fn browser_source() -> String {
     "browser".to_string()
 }
@@ -57,6 +65,7 @@ fn browser_source() -> String {
 struct QuotaState(Mutex<HashMap<String, BrowserQuotaPayload>>);
 
 static REFRESH_TOKEN: AtomicU64 = AtomicU64::new(0);
+static LAST_BROWSER_MESSAGE_AT: AtomicU64 = AtomicU64::new(0);
 static UPDATE_CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
@@ -244,18 +253,16 @@ define_class!(
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) {
             request_quota_refresh();
+            if !browser_connection_is_active() {
+                open_usage_page();
+            }
         }
     }
 
     impl QuotaMenuTarget {
         #[unsafe(method(openUsage:))]
         fn open_usage(&self, _sender: Option<&AnyObject>) {
-            let url = NSURL::URLWithString(&NSString::from_str(
-                "https://chatgpt.com/codex/cloud/settings/analytics#usage",
-            ));
-            if let Some(url) = url {
-                NSWorkspace::sharedWorkspace().openURL(&url);
-            }
+            open_usage_page();
         }
 
         #[unsafe(method(checkForUpdates:))]
@@ -295,6 +302,52 @@ fn get_quota_snapshots(state: State<'_, QuotaState>) -> Vec<BrowserQuotaPayload>
 #[tauri::command]
 fn request_quota_refresh() -> u64 {
     REFRESH_TOKEN.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+fn unix_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn connection_is_recent_at(last_message_at: u64, now: u64) -> bool {
+    last_message_at > 0 && now.saturating_sub(last_message_at) <= BROWSER_CONNECTION_TIMEOUT_SECS
+}
+
+fn browser_connection_is_active() -> bool {
+    connection_is_recent_at(
+        LAST_BROWSER_MESSAGE_AT.load(Ordering::Acquire),
+        unix_timestamp_secs(),
+    )
+}
+
+fn mark_browser_connected() {
+    LAST_BROWSER_MESSAGE_AT.store(unix_timestamp_secs(), Ordering::Release);
+}
+
+#[cfg(target_os = "macos")]
+fn open_usage_page() {
+    let Some(url) = NSURL::URLWithString(&NSString::from_str(
+        "https://chatgpt.com/codex/cloud/settings/analytics#usage",
+    )) else {
+        return;
+    };
+
+    let workspace = NSWorkspace::sharedWorkspace();
+    let brave_bundle_id = NSString::from_str("com.brave.Browser");
+    if let Some(brave_url) = workspace.URLForApplicationWithBundleIdentifier(&brave_bundle_id) {
+        let urls = NSArray::from_slice(&[&*url]);
+        let configuration = NSWorkspaceOpenConfiguration::configuration();
+        workspace.openURLs_withApplicationAtURL_configuration_completionHandler(
+            &urls,
+            &brave_url,
+            &configuration,
+            None,
+        );
+    } else {
+        workspace.openURL(&url);
+    }
 }
 
 fn reset_label(payload: &BrowserQuotaPayload) -> String {
@@ -361,8 +414,51 @@ fn update_native_menu(app: &tauri::AppHandle, payload: &BrowserQuotaPayload) {
     });
 }
 
+#[cfg(target_os = "macos")]
+fn set_native_menu_disconnected(app: &tauri::AppHandle) {
+    let native_menu = app
+        .state::<NativeMenuState>()
+        .0
+        .lock()
+        .ok()
+        .and_then(|menu| menu.clone());
+    let Some(native_menu) = native_menu else {
+        return;
+    };
+
+    let _ = app.run_on_main_thread(move || unsafe {
+        for handles in [native_menu.five_hour, native_menu.weekly] {
+            let value = &*(handles.value as *const NSTextField);
+            let reset_label = &*(handles.reset as *const NSTextField);
+            let fill = &*(handles.fill as *const NSBox);
+            value.setStringValue(&NSString::from_str("--"));
+            reset_label.setStringValue(&NSString::from_str("Réinitialisation : --"));
+            fill.setFrameSize(NSSize::new(0.0, 8.0));
+        }
+
+        let button = &*(native_menu.status_button as *const objc2_app_kit::NSStatusBarButton);
+        button.setTitle(&NSString::from_str("--"));
+    });
+}
+
 #[cfg(not(target_os = "macos"))]
 fn update_native_menu(_app: &tauri::AppHandle, _payload: &BrowserQuotaPayload) {}
+
+#[cfg(not(target_os = "macos"))]
+fn set_native_menu_disconnected(_app: &tauri::AppHandle) {}
+
+fn mark_browser_disconnected(app: &tauri::AppHandle) {
+    let was_connected = LAST_BROWSER_MESSAGE_AT.swap(0, Ordering::AcqRel) > 0;
+    if !was_connected {
+        return;
+    }
+
+    if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
+        snapshots.clear();
+    }
+    set_native_menu_disconnected(app);
+    let _ = app.emit("quota-disconnected", ());
+}
 
 #[cfg(target_os = "macos")]
 fn frame(x: f64, y: f64, width: f64, height: f64) -> NSRect {
@@ -380,7 +476,7 @@ fn make_quota_item(
     title.setFrame(frame(16.0, 50.0, 150.0, 18.0));
     title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
 
-    let value = NSTextField::labelWithString(&NSString::from_str("En attente"), mtm);
+    let value = NSTextField::labelWithString(&NSString::from_str("--"), mtm);
     value.setFrame(frame(164.0, 50.0, 100.0, 18.0));
     value.setAlignment(objc2_app_kit::NSTextAlignment::Right);
 
@@ -484,7 +580,7 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
         NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
     status_item.setMenu(Some(&menu));
     let button = status_item.button(mtm).expect("status item button");
-    button.setTitle(&NSString::from_str("--%"));
+    button.setTitle(&NSString::from_str("--"));
     button.setToolTip(Some(&NSString::from_str("Quota Codex")));
 
     let icon_bytes = include_bytes!("../icons/mascot-menu.png");
@@ -548,6 +644,34 @@ fn start_browser_bridge(app: tauri::AppHandle) {
                 continue;
             }
 
+            if request.method() == &Method::Post && request.url() == "/connection" {
+                let mut body = String::new();
+                let payload = request
+                    .as_reader()
+                    .read_to_string(&mut body)
+                    .ok()
+                    .and_then(|_| serde_json::from_str::<BrowserConnectionPayload>(&body).ok());
+
+                if let Some(payload) = payload {
+                    if payload.connected {
+                        mark_browser_connected();
+                    } else {
+                        mark_browser_disconnected(&app);
+                    }
+                    let response = Response::from_string("{\"ok\":true}")
+                        .with_header(cors)
+                        .with_header(content_type);
+                    let _ = request.respond(response);
+                } else {
+                    let response = Response::from_string("{\"ok\":false}")
+                        .with_status_code(400)
+                        .with_header(cors)
+                        .with_header(content_type);
+                    let _ = request.respond(response);
+                }
+                continue;
+            }
+
             if request.method() != &Method::Post || request.url() != "/quota" {
                 let response = Response::from_string("Not found")
                     .with_status_code(404)
@@ -564,6 +688,7 @@ fn start_browser_bridge(app: tauri::AppHandle) {
                 .and_then(|_| serde_json::from_str::<BrowserQuotaPayload>(&body).ok());
 
             if let Some(payload) = parsed.filter(|payload| payload.limit > 0) {
+                mark_browser_connected();
                 if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
                     snapshots.insert(payload.period.clone(), payload.clone());
                 }
@@ -581,6 +706,27 @@ fn start_browser_bridge(app: tauri::AppHandle) {
                     .with_header(content_type);
                 let _ = request.respond(response);
             }
+        }
+    });
+}
+
+fn start_connection_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let last_message_at = LAST_BROWSER_MESSAGE_AT.load(Ordering::Acquire);
+        if last_message_at == 0 || connection_is_recent_at(last_message_at, unix_timestamp_secs()) {
+            continue;
+        }
+
+        if LAST_BROWSER_MESSAGE_AT
+            .compare_exchange(last_message_at, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            if let Ok(mut snapshots) = app.state::<QuotaState>().0.lock() {
+                snapshots.clear();
+            }
+            set_native_menu_disconnected(&app);
+            let _ = app.emit("quota-disconnected", ());
         }
     });
 }
@@ -614,8 +760,31 @@ pub fn run() {
             build_native_menu(app)?;
 
             start_browser_bridge(app.handle().clone());
+            start_connection_watchdog(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_connection_expires_after_timeout() {
+        assert!(connection_is_recent_at(
+            100,
+            100 + BROWSER_CONNECTION_TIMEOUT_SECS
+        ));
+        assert!(!connection_is_recent_at(
+            100,
+            101 + BROWSER_CONNECTION_TIMEOUT_SECS
+        ));
+    }
+
+    #[test]
+    fn missing_browser_message_is_disconnected() {
+        assert!(!connection_is_recent_at(0, 100));
+    }
 }

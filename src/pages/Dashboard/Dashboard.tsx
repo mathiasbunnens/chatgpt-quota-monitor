@@ -62,9 +62,21 @@ export default function Dashboard() {
         .catch(() => undefined);
     });
 
+    let unlistenDisconnected: (() => void) | undefined;
+    void listen("quota-disconnected", () => {
+      setSnapshots({});
+    }).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unlistenDisconnected = dispose;
+    });
+
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenDisconnected?.();
     };
   }, []);
 

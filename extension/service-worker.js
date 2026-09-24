@@ -1,4 +1,5 @@
 const BRIDGE_URL = "http://127.0.0.1:48721/quota";
+const CONNECTION_URL = "http://127.0.0.1:48721/connection";
 const REFRESH_URL = "http://127.0.0.1:48721/refresh";
 const REFRESH_ALARM = "quota-codex-refresh";
 const REFRESH_TOKEN_KEY = "desktopRefreshToken";
@@ -10,6 +11,25 @@ const USAGE_PAGE_PATTERNS = [
 ];
 
 let refreshCheckInFlight = false;
+let connectionCheckInFlight = false;
+
+async function reportConnectionStatus() {
+  if (connectionCheckInFlight) return;
+  connectionCheckInFlight = true;
+
+  try {
+    const tabs = await chrome.tabs.query({ url: USAGE_PAGE_PATTERNS });
+    await fetch(CONNECTION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connected: tabs.length > 0 }),
+    });
+  } catch {
+    // The desktop app may not be running yet.
+  } finally {
+    connectionCheckInFlight = false;
+  }
+}
 
 async function reloadUsagePages() {
   const tabs = await chrome.tabs.query({ url: USAGE_PAGE_PATTERNS });
@@ -52,20 +72,37 @@ async function ensureRefreshAlarm() {
 chrome.runtime.onInstalled.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
+  void reportConnectionStatus();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
+  void reportConnectionStatus();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === REFRESH_ALARM) void checkForForcedRefresh();
+  if (alarm.name === REFRESH_ALARM) {
+    void checkForForcedRefresh();
+    void reportConnectionStatus();
+  }
+});
+
+chrome.tabs.onRemoved.addListener(() => {
+  void reportConnectionStatus();
+});
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.status || changeInfo.url) void reportConnectionStatus();
 });
 
 void ensureRefreshAlarm();
 void checkForForcedRefresh();
-setInterval(checkForForcedRefresh, 2_000);
+void reportConnectionStatus();
+setInterval(() => {
+  void checkForForcedRefresh();
+  void reportConnectionStatus();
+}, 2_000);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "quota-codex-browser") return undefined;

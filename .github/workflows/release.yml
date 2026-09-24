@@ -27,6 +27,13 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          shared-key: macos-universal
+          cache-on-failure: true
+
       - name: Install frontend dependencies
         run: npm ci
 
