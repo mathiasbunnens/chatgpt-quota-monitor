@@ -104,6 +104,16 @@ function publishStatus() {
   });
 }
 
+const runtime = globalThis.chrome?.runtime;
+if (runtime?.id && typeof runtime.onMessage?.addListener === "function") {
+  runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "quota-codex-read-page") return undefined;
+    publishStatus();
+    sendResponse({ ok: true });
+    return undefined;
+  });
+}
+
 publishStatus();
 setInterval(publishStatus, 10_000);
 let publishTimeout;

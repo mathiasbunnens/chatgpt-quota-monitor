@@ -4,6 +4,8 @@ const REFRESH_URL = "http://127.0.0.1:48721/refresh";
 const REFRESH_ALARM = "quota-codex-refresh";
 const REFRESH_TOKEN_KEY = "desktopRefreshToken";
 const BACKGROUND_USAGE_TAB_KEY = "backgroundUsageTabId";
+const LAST_BACKGROUND_RELOAD_KEY = "lastBackgroundReloadAt";
+const BACKGROUND_RELOAD_INTERVAL_MS = 2 * 60 * 1_000;
 const USAGE_PAGE_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage";
 const USAGE_PAGE_PATTERNS = [
   "https://chatgpt.com/codex/settings/usage*",
@@ -62,9 +64,59 @@ async function getBackgroundUsageTab({ createIfMissing = false } = {}) {
   return rememberBackgroundTab(createdTab);
 }
 
-async function refreshBackgroundUsageTab(options) {
+async function isTabInForeground(tab) {
+  if (!tab.active || tab.windowId === undefined) return false;
+  try {
+    const window = await chrome.windows.get(tab.windowId);
+    return window.focused;
+  } catch {
+    return false;
+  }
+}
+
+async function readUsagePage(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "quota-codex-read-page",
+    });
+    return response?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function backgroundReloadIsDue() {
+  const stored = await chrome.storage.local.get(LAST_BACKGROUND_RELOAD_KEY);
+  const lastReloadAt = stored[LAST_BACKGROUND_RELOAD_KEY];
+  return !Number.isFinite(lastReloadAt) || Date.now() - lastReloadAt >= BACKGROUND_RELOAD_INTERVAL_MS;
+}
+
+async function reloadUsageTab(tabId) {
+  await chrome.storage.local.set({ [LAST_BACKGROUND_RELOAD_KEY]: Date.now() });
+  await chrome.tabs.reload(tabId);
+}
+
+async function syncBackgroundUsageTab(options = {}) {
   const tab = await getBackgroundUsageTab(options);
-  if (tab?.id !== undefined) await chrome.tabs.reload(tab.id);
+  if (tab?.id === undefined) return;
+
+  if (tab.status === "loading") {
+    await chrome.storage.local.set({ [LAST_BACKGROUND_RELOAD_KEY]: Date.now() });
+    return;
+  }
+
+  const isForeground = await isTabInForeground(tab);
+  const shouldReload =
+    options.forceReload === true ||
+    tab.discarded === true ||
+    (!isForeground && (await backgroundReloadIsDue()));
+
+  if (shouldReload) {
+    await reloadUsageTab(tab.id);
+    return;
+  }
+
+  if (!(await readUsagePage(tab.id))) await reloadUsageTab(tab.id);
 }
 
 async function reportConnectionStatus() {
@@ -102,7 +154,7 @@ async function checkForForcedRefresh() {
 
     await chrome.storage.local.set({ [REFRESH_TOKEN_KEY]: refreshToken });
     if (previousToken !== undefined || refreshToken > 0) {
-      await refreshBackgroundUsageTab({ createIfMissing: true });
+      await syncBackgroundUsageTab({ createIfMissing: true, forceReload: true });
     }
   } catch {
     // The desktop app may not be running yet.
@@ -122,21 +174,21 @@ chrome.runtime.onInstalled.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
-  void refreshBackgroundUsageTab().catch(() => undefined);
+  void syncBackgroundUsageTab({ forceReload: true }).catch(() => undefined);
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();
-  void refreshBackgroundUsageTab().catch(() => undefined);
+  void syncBackgroundUsageTab({ forceReload: true }).catch(() => undefined);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === REFRESH_ALARM) {
     void checkForForcedRefresh();
     void reportConnectionStatus();
-    void refreshBackgroundUsageTab().catch(() => undefined);
+    void syncBackgroundUsageTab().catch(() => undefined);
   }
 });
 
