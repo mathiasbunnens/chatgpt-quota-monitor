@@ -515,6 +515,7 @@ fn reset_label(payload: &QuotaPayload) -> String {
         .unwrap_or_else(|| "--".to_string())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn quota_color_transition(percentage: u32) -> (&'static str, &'static str, f64) {
     match percentage {
         0..=20 => ("red", "red", 0.0),
