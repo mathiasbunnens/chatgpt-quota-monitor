@@ -6,11 +6,21 @@ export function quotaPercentage(snapshot: QuotaSnapshot) {
 }
 
 export function formatResetDate(value: string) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "non communiquée";
   return new Intl.DateTimeFormat("fr-FR", {
     weekday: "short",
     day: "numeric",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
+}
+
+export function quotaLabel(snapshot: QuotaSnapshot) {
+  return snapshot.label || ({
+    "five-hour": "Limite 5 heures",
+    weekly: "Limite hebdomadaire",
+    "reserve-weekly": "Réserve Luna",
+  } as Record<string, string>)[snapshot.period] || snapshot.period;
 }

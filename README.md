@@ -1,83 +1,58 @@
 # Quota Codex
 
-Widget macOS natif qui affiche le quota Codex restant directement dans la barre des menus pour un abonnement ChatGPT Plus.
+Application de suivi des quotas Codex pour **Windows, Linux et macOS**. Codex App Server est la source principale : aucune extension ni page ouverte n’est nécessaire après connexion.
 
-<img width="300" alt="Capture d’écran 2026-09-23 à 23 36 38 2" src="https://github.com/user-attachments/assets/5def5240-3c0b-42b2-ba33-d31215adbf63" />
+- Détection de Codex et réutilisation de sa connexion ChatGPT.
+- Connexion depuis l’application, avec option de code pour un autre appareil.
+- Affichage de toutes les fenêtres renvoyées, même si seule une limite hebdomadaire est disponible.
+- Actualisation toutes les 60 secondes et reconnexion avec temporisation après erreur.
+- Bouton **Voir les détails sur Codex** pour ouvrir la page d’utilisation.
+- Menu natif macOS ; tableau de bord et zone de notification sous Windows/Linux.
+- Extension Chromium facultative comme source de secours.
 
-Un clic sur la mascotte ouvre un menu compact avec :
+## Installation
 
-- la limite glissante de 5 heures ;
-- la limite globale hebdomadaire ;
-- l’heure de réinitialisation de chaque limite ;
-- une barre de progression verte, orange puis rouge à mesure que le quota diminue.
+Installe Quota Codex, puis lance-le. Si Codex est déjà installé et connecté à ChatGPT, les quotas apparaissent automatiquement. Sinon, ouvre **Connexion** et suis les instructions.
 
-L’application ne lit ni mot de passe, ni cookie, ni token. Une petite extension Chromium relève uniquement les informations déjà visibles sur la page d’utilisation Codex et les transmet localement à l’application via `127.0.0.1`.
+Un [Codex CLI](https://developers.openai.com/codex/cli) compatible doit être installé séparément ; il n’est pas inclus dans le paquet. Les chemins usuels et le PATH sont recherchés. Un chemin personnalisé peut être enregistré ; sous Windows, choisis le véritable fichier `codex.exe`, pas un script `.cmd`.
 
-## Installation rapide
+Choisis **Se connecter avec ChatGPT** ou **Connexion par code** si nécessaire. Termine l’autorisation, puis ferme le navigateur. Voir [INSTALLATION.md](docs/INSTALLATION.md) et [PLATFORMS.md](docs/PLATFORMS.md).
 
-1. Télécharge **Quota Codex** depuis la [dernière release GitHub](../../releases/latest).
-2. Ouvre le fichier `.dmg`, puis glisse **Quota Codex** dans **Applications**.
-3. Décompresse l’archive de l’extension dans un dossier que tu conserveras.
-4. Dans Chrome, Brave, Edge ou Arc, ouvre la page des extensions, active le **Mode développeur**, puis choisis **Charger l’extension non empaquetée** et sélectionne le dossier `extension` décompressé.
-5. Lance **Quota Codex**, connecte-toi à ChatGPT, puis ouvre <https://chatgpt.com/codex/settings/usage>.
+Les paquets de cette branche seront disponibles sur GitHub après une release construite avec son workflow. Les anciennes versions peuvent encore nécessiter l’extension.
 
-Les valeurs apparaissent ensuite dans la barre des menus et sont actualisées automatiquement.
+## Données et connexion
 
-## Mises à jour
+Codex gère les identifiants et le renouvellement des jetons. Quota Codex demande uniquement l’état du compte et les quotas, sans conversation ni tâche d’agent. L’interface ne reçoit aucun jeton du compte. Une connexion ChatGPT est nécessaire ; une clé API seule ne fournit pas les quotas d’abonnement.
 
-Quota Codex vérifie les nouvelles releases GitHub au démarrage. Les mises à jour sont signées, téléchargées puis installées automatiquement avant le redémarrage de l’application.
-
-> La première version distribuée n’est pas signée avec un certificat Apple. Si macOS bloque son lancement, fais un clic droit sur **Quota Codex** dans Applications, choisis **Ouvrir**, puis confirme une seconde fois.
-
-Le guide détaillé, avec les adresses propres à chaque navigateur et les solutions aux problèmes courants, se trouve dans [docs/INSTALLATION.md](docs/INSTALLATION.md).
-
-## Confidentialité
-
-- aucune donnée n’est envoyée vers un serveur tiers par ce projet ;
-- l’extension ne demande aucune permission de lecture des cookies ou du stockage du navigateur ;
-- le transfert navigateur → application reste sur la machine, via `http://127.0.0.1:48721/quota` ;
-- le code source de l’application et de l’extension est intégralement disponible dans ce dépôt.
-
-## Compatibilité
-
-- macOS, Apple Silicon et Intel ;
-- Chrome, Brave, Edge, Arc et autres navigateurs Chromium compatibles Manifest V3 ;
-- une session ChatGPT connectée avec accès à la page d’utilisation Codex.
-
-Safari et Firefox ne sont pas encore pris en charge.
+L’extension de secours lit uniquement les valeurs visibles et les transmet à `127.0.0.1:48721`. Elle ne lit ni cookies ni mots de passe. Elle ne remplace jamais une réponse Codex valide. Les limites absentes ne sont pas interprétées comme illimitées.
 
 ## Développement
 
-Prérequis : Node.js, npm, Rust et les dépendances système de Tauri 2.
+Prérequis : Node.js 22, npm, Rust et les [dépendances Tauri](https://v2.tauri.app/start/prerequisites/).
 
-```bash
-npm install
+```sh
+npm ci
 npm run tauri dev
-```
-
-Vérifications :
-
-```bash
-npm run typecheck
 npm run build
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-Build macOS local :
+Test facultatif en lecture seule avec une connexion Codex existante :
 
-```bash
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-npm run tauri build -- --target universal-apple-darwin
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_codex_account_read -- --ignored --nocapture
 ```
-
-Les paquets sont générés dans `src-tauri/target/universal-apple-darwin/release/bundle/`.
 
 ## Architecture
 
-- `src-tauri/` : widget AppKit/Tauri, menu natif et bridge HTTP local ;
-- `extension/` : extension Chromium Manifest V3 qui lit la page d’utilisation ;
-- `src/` : ancien frontend de développement, conservé pour les composants et les types ;
-- `.github/workflows/release.yml` : génération automatique des artefacts lors de la publication d’un tag `v*`.
+- `src-tauri/src/codex.rs` : processus Codex, connexion et protocole stdio.
+- `src-tauri/src/lib.rs` : priorité des sources, menus, fenêtres et bridge de secours.
+- `src-tauri/src/setup.rs` : navigateur, page de détails et extension facultative.
+- `src/` : tableau de bord et connexion sur les trois plateformes.
+- `.github/workflows/` : vérifications et paquets multiplateformes.
+
+Les mises à jour pointent encore vers le dépôt d’origine. Configure une URL et une clé de signature propres avant de distribuer un fork.
 
 ## Licence
 

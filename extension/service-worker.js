@@ -170,7 +170,11 @@ async function ensureRefreshAlarm() {
   }
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install") {
+    // Bring sign-in into view immediately after the user loads the extension.
+    void chrome.tabs.create({ url: USAGE_PAGE_URL, active: true }).catch(() => undefined);
+  }
   void ensureRefreshAlarm();
   void checkForForcedRefresh();
   void reportConnectionStatus();

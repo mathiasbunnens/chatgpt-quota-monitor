@@ -195,3 +195,76 @@
     font-weight: 800;
   }
 }
+
+// Desktop surfaces use the host font and platform-specific corner treatments.
+:root[data-platform="windows"],
+:root[data-platform="linux"] {
+  --desktop-bg: #f3f3f3;
+  --desktop-card: #ffffff;
+  --desktop-ink: #202020;
+  --desktop-muted: #616161;
+  --desktop-border: #d6d6d6;
+  --desktop-accent: #0067c0;
+  --desktop-radius: 4px;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: var(--desktop-ink);
+  background: var(--desktop-bg);
+
+  .dashboard {
+    background: var(--desktop-bg);
+    color: var(--desktop-ink);
+    h1 { font-family: inherit; line-height: 1.2; }
+    &__header, &__actions, &__footer { flex-wrap: wrap; }
+    &__quota {
+      background: var(--desktop-card);
+      border-color: var(--desktop-border);
+      border-radius: var(--desktop-radius);
+      box-shadow: none;
+    }
+    &__quota-heading { flex-wrap: wrap; gap: 0.4rem; }
+    &__quota-heading strong { color: var(--desktop-ink); }
+    &__quota > p, &__quota-heading small, &__status, &__footer,
+    &__empty-state > p { color: var(--desktop-muted); }
+    &__eyebrow, &__footer button { color: var(--desktop-accent); }
+    button {
+      border: 1px solid var(--desktop-border);
+      border-radius: var(--desktop-radius);
+      background: var(--desktop-card);
+      color: var(--desktop-accent);
+      padding: 0.5rem 0.75rem;
+      font-weight: 600;
+      &:hover { filter: brightness(0.95); }
+      &:disabled { opacity: 0.55; cursor: wait; }
+      &:focus-visible { outline: 2px solid var(--desktop-accent); }
+    }
+    &__empty-icon { background: var(--desktop-accent); color: white; font-family: inherit; }
+    &__progress { background: var(--desktop-border); }
+  }
+}
+
+:root[data-platform="linux"] {
+  --desktop-bg: #fafafa;
+  --desktop-accent: #1c71d8;
+  --desktop-radius: 12px;
+  font-family: "Adwaita Sans", "Cantarell", "Ubuntu", system-ui, sans-serif;
+  .dashboard button { border-radius: 8px; }
+}
+
+.dashboard__progress--warning span { background: #ba7510; }
+.dashboard__progress--low span { background: #c42b1c; }
+
+@media (prefers-color-scheme: dark) {
+  :root[data-platform="windows"], :root[data-platform="linux"] {
+    --desktop-bg: #202020;
+    --desktop-card: #2d2d2d;
+    --desktop-ink: #f5f5f5;
+    --desktop-muted: #c6c6c6;
+    --desktop-border: #484848;
+    --desktop-accent: #75baff;
+    color-scheme: dark;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard__progress span { transition: none; }
+}
