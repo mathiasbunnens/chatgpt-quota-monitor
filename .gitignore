@@ -4,3 +4,7 @@ src-tauri/target/
 .DS_Store
 *.log
 release/
+.codex
+
+.audit-tools/
+.security-audit/

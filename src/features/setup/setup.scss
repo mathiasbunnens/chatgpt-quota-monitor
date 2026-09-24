@@ -1,0 +1,39 @@
+.connection-setup {
+  max-width: 38rem;
+  margin: 0 auto;
+  line-height: 1.45;
+  h1 { font-size: 1.3rem; }
+  p { margin: 0.65rem 0; }
+  label { display: block; font-weight: 600; }
+  select, input {
+    display: block;
+    width: 100%;
+    margin: 0.5rem 0;
+    padding: 0.65rem;
+    border: 1px solid var(--desktop-border, #ccc);
+    border-radius: var(--desktop-radius, 6px);
+    background: var(--desktop-card, white);
+    color: inherit;
+    font: inherit;
+  }
+  ol { padding-left: 1.3rem; }
+  li { margin: 1rem 0; }
+  small { display: block; margin-top: 0.5rem; color: var(--desktop-muted, #616161); overflow-wrap: anywhere; }
+  input { font-size: 0.75rem; }
+  &__status { padding: 0.8rem; background: var(--desktop-card, white); border: 1px solid var(--desktop-border, #ccc); border-radius: var(--desktop-radius, 6px); }
+}
+
+.codex-connection {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--desktop-border, #ccc);
+  font-size: 0.85rem;
+  h2 { font-size: 1.1rem; }
+  details { margin-top: 1rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  code { overflow-wrap: anywhere; }
+  button { margin: 0.25rem 0.35rem 0.25rem 0; }
+  &__actions { display: flex; flex-wrap: wrap; }
+  &__code { font-family: monospace; font-size: 1.2rem; user-select: all; }
+}
+.dashboard__source { color: var(--desktop-muted, #616161); font-size: 0.8rem; }

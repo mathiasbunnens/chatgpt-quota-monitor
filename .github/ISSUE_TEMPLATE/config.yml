@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installation and troubleshooting
+    url: https://github.com/mathiasbunnens/chatgpt-quota-monitor/blob/multi_platform_support/docs/INSTALLATION.md
+    about: Setup, authentication, and platform-specific behavior.
+  - name: Security reporting
+    url: https://github.com/mathiasbunnens/chatgpt-quota-monitor/blob/multi_platform_support/SECURITY.md
+    about: Read the policy before sharing a possible vulnerability.

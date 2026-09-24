@@ -1,0 +1,17 @@
+{
+  "names": [
+    "codex",
+    "openai",
+    "quota-monitor",
+    "usage-monitor",
+    "desktop-app",
+    "system-tray",
+    "tauri",
+    "rust",
+    "react",
+    "typescript",
+    "windows",
+    "linux",
+    "macos"
+  ]
+}

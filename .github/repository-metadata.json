@@ -1,0 +1,18 @@
+{
+  "description": "Cross-platform Codex quota monitor with tray percentages, direct account sync, and activity-aware refresh for Windows, macOS, and Linux.",
+  "topics": [
+    "codex",
+    "openai",
+    "quota-monitor",
+    "usage-monitor",
+    "desktop-app",
+    "system-tray",
+    "tauri",
+    "rust",
+    "react",
+    "typescript",
+    "windows",
+    "linux",
+    "macos"
+  ]
+}

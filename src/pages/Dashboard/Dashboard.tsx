@@ -1,144 +1,103 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useState } from "react";
-import { formatResetDate, quotaPercentage } from "../../features/quota/providers";
-import type { QuotaPeriod, QuotaSnapshot } from "../../features/quota/types";
+import RefreshSettings from "../../features/setup/RefreshSettings";
+import { useCallback, useEffect, useState } from "react";
+import CodexConnection from "../../features/setup/CodexConnection";
+import { formatResetDate, quotaLabel, quotaPercentage } from "../../features/quota/providers";
+import type { CodexStatus, QuotaSnapshot } from "../../features/quota/types";
 import "./dashboard.scss";
 
-const USAGE_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage";
-
-const periodLabels: Record<QuotaPeriod, string> = {
-  "five-hour": "Limite 5 heures",
-  weekly: "Limite globale",
-  "reserve-weekly": "Réserve Luna",
-};
-
-function mergeSnapshots(
-  current: Partial<Record<QuotaPeriod, QuotaSnapshot>>,
-  incoming: QuotaSnapshot[],
-) {
-  return incoming.reduce<Partial<Record<QuotaPeriod, QuotaSnapshot>>>(
-    (next, snapshot) => ({ ...next, [snapshot.period]: snapshot }),
-    current,
-  );
-}
-
 export default function Dashboard() {
-  const [snapshots, setSnapshots] = useState<Partial<Record<QuotaPeriod, QuotaSnapshot>>>({});
-  const [platform, setPlatform] = useState("desktop");
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
-
-  const refreshQuota = async () => {
-    setIsRefreshing(true);
-    try {
-      const storedSnapshots = await invoke<QuotaSnapshot[]>("get_quota_snapshots");
-      setSnapshots((current) => mergeSnapshots(current, storedSnapshots));
-      await invoke("request_quota_refresh");
-      setLastRefreshAt(new Date());
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
+  const [snapshots, setSnapshots] = useState<QuotaSnapshot[]>([]);
+  const [status, setStatus] = useState<CodexStatus | null>(null);
+  const [showRefresh, setShowRefresh] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const reload = useCallback(() => setRevision((value) => value + 1), []);
 
   useEffect(() => {
-    void invoke<string>("get_platform").then(setPlatform).catch(() => undefined);
-
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void listen<QuotaSnapshot>("quota-updated", (event) => {
-      setSnapshots((current) => ({ ...current, [event.payload.period]: event.payload }));
-    }).then((dispose) => {
-      if (disposed) {
-        dispose();
-        return;
-      }
-      unlisten = dispose;
-      void invoke<QuotaSnapshot[]>("get_quota_snapshots")
-        .then((storedSnapshots) => {
-          if (!disposed) setSnapshots((current) => mergeSnapshots(current, storedSnapshots));
-        })
-        .catch(() => undefined);
-    });
-
-    let unlistenDisconnected: (() => void) | undefined;
-    void listen("quota-disconnected", () => {
-      setSnapshots({});
-    }).then((dispose) => {
-      if (disposed) {
-        dispose();
-        return;
-      }
-      unlistenDisconnected = dispose;
-    });
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-      unlistenDisconnected?.();
-    };
+    const subscription = listen("open-refresh-settings", () => setShowRefresh(true)).catch(() => () => {});
+    return () => { void subscription.then((unlisten) => unlisten()); };
   }, []);
 
-  const snapshot = snapshots["five-hour"];
-  const visiblePeriods: QuotaPeriod[] = ["five-hour", "weekly", "reserve-weekly"];
-  const availableSnapshots = visiblePeriods
-    .map((period) => snapshots[period])
-    .filter((current): current is QuotaSnapshot => Boolean(current));
+  useEffect(() => {
+    let disposed = false;
+    void invoke<string>("get_platform").then((platform) => {
+      if (!disposed) document.documentElement.dataset.platform = platform;
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
 
-  if (!snapshot) {
-    return (
-      <main className="dashboard dashboard--empty">
-        <section className="dashboard__empty-state" aria-labelledby="empty-title">
-          <span className="dashboard__empty-icon" aria-hidden="true">%</span>
-          <h1 id="empty-title">En attente des quotas</h1>
-          <p>Garde la page d’utilisation Codex ouverte pour activer la synchronisation.</p>
-          <button type="button" onClick={() => void openUrl(USAGE_URL)}>
-            Ouvrir la page d’utilisation
-          </button>
-          <button type="button" onClick={() => void refreshQuota()} disabled={isRefreshing}>
-            {isRefreshing ? "Rechargement…" : "Recharger"}
-          </button>
-        </section>
-      </main>
-    );
-  }
+  useEffect(() => {
+    let disposed = false;
+    let timer: number;
+    const poll = async () => {
+      try {
+        const [nextSnapshots, nextStatus] = await Promise.all([
+          invoke<QuotaSnapshot[]>("get_quota_snapshots"),
+          invoke<CodexStatus>("get_codex_status"),
+        ]);
+        if (!disposed) { setSnapshots(nextSnapshots); setStatus(nextStatus); }
+      } catch {
+        if (!disposed) setError("Impossible de communiquer avec l’application. Relance Quota Codex.");
+      } finally {
+        if (!disposed) timer = window.setTimeout(() => void poll(), 2000);
+      }
+    };
+    void poll();
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, [revision]);
 
-  return (
-    <main className="dashboard">
-      <header className="dashboard__header">
-        <div>
-          <p className="dashboard__eyebrow">Codex</p>
-          <h1>Quotas</h1>
-        </div>
-        <div className="dashboard__actions">
-          <span className="dashboard__status"><i /> Synchronisé</span>
-          <button type="button" onClick={() => void refreshQuota()} disabled={isRefreshing}>
-            {isRefreshing ? "Rechargement…" : "Recharger"}
-          </button>
-        </div>
-      </header>
-      <section className="dashboard__quota-list" aria-label="État des limites Codex">
-        {availableSnapshots.map((current) => {
-          const percentage = quotaPercentage(current);
-          return (
-            <article className="dashboard__quota" key={current.period}>
-              <div className="dashboard__quota-heading">
-                <span>{periodLabels[current.period]}</span>
-                <strong>{Math.round(percentage)} % <small>restants</small></strong>
-              </div>
-              <div className="dashboard__progress" role="progressbar" aria-label={`${periodLabels[current.period]} : ${Math.round(percentage)} % restants`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percentage)}>
-                <span style={{ width: `${percentage}%` }} />
-              </div>
-              <p>Réinitialisation {formatResetDate(current.resetAt)}</p>
-            </article>
-          );
-        })}
-      </section>
-      <footer className="dashboard__footer">
-        <span>{snapshot.model} · {platform}{lastRefreshAt ? ` · ${lastRefreshAt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
-        <button type="button" onClick={() => void openUrl(USAGE_URL)}>Ouvrir Codex ↗</button>
-      </footer>
-    </main>
-  );
+  const refresh = async () => {
+    setRefreshing(true); setError(null);
+    try { await invoke("request_quota_refresh"); reload(); }
+    catch (cause) { setError(String(cause)); }
+    finally { setRefreshing(false); }
+  };
+  const openDetails = async () => {
+    setError(null);
+    try { await invoke("open_usage_details"); }
+    catch (cause) { setError(String(cause)); }
+  };
+  const isConnected = status?.phase === "ready";
+  const needsSetup = snapshots.length === 0 && status?.phase !== "ready";
+
+  return <main className="dashboard">
+    <header className="dashboard__header">
+      <div><p className="dashboard__eyebrow">Codex {status?.planType && <span className="plan-badge">{status.planType}</span>}</p><h1>Vos quotas</h1></div>
+      <div className="dashboard__actions">
+        <button onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Actualisation…" : "Actualiser"}</button>
+        <button onClick={() => setShowRefresh(true)} aria-label="Réglages d’actualisation">Réglages</button>
+        {!isConnected && <button onClick={() => setShowSetup((value) => !value)} aria-expanded={showSetup}>{showSetup ? "Masquer la connexion" : "Connexion"}</button>}
+      </div>
+    </header>
+    <p className="dashboard__source" role="status">
+      {status?.phase === "ready" ? "Source : Codex · Synchronisé" : status?.message || "Connexion à Codex…"}
+    </p>
+    {error && <p role="alert">{error}</p>}
+    <section className="dashboard__quota-list" aria-label="État des limites Codex">
+      {snapshots.map((snapshot) => {
+        const percentage = quotaPercentage(snapshot);
+        const label = quotaLabel(snapshot);
+        return <article className="dashboard__quota" key={snapshot.period}>
+          <div className="dashboard__quota-heading"><span>{label}</span><strong>{Math.round(percentage)} % <small>restants</small></strong></div>
+          <div className={"dashboard__progress dashboard__progress--" + (percentage <= 20 ? "low" : percentage <= 40 ? "warning" : "healthy")}
+            role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percentage)}>
+            <span style={{ width: percentage + "%" }} />
+          </div>
+          <p>Réinitialisation : {formatResetDate(snapshot.resetAt)}</p>
+        </article>;
+      })}
+    </section>
+    {status?.phase === "ready" && !snapshots.length && <p className="dashboard__source">Aucun quota à afficher. La réserve peut ne pas être communiquée par Codex ; consultez la page de détails pour vérifier.</p>}
+    <footer className="dashboard__footer">
+      <span>{snapshots[0]?.checkedAt ? "Vérifié : " + new Date(snapshots[0].checkedAt).toLocaleTimeString("fr-FR") : "Aucune donnée reçue"}</span>
+      <button onClick={() => void openDetails()}>Voir les détails sur Codex ↗</button>
+    </footer>
+    <p className="dashboard__strategy">Actualisation {status?.refreshSettings.customSeconds ? "personnalisée" : "dynamique"} · toutes les {status?.refreshSeconds || 120} s</p>
+    {showRefresh && <RefreshSettings status={status} onClose={() => setShowRefresh(false)} onChange={reload} />}
+    {!isConnected && (showSetup || needsSetup) && <CodexConnection status={status} onChange={reload} />}
+  </main>;
 }

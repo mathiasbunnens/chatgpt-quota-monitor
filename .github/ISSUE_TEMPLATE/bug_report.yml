@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible problem with Quota Codex.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "For security vulnerabilities, read SECURITY.md instead. Do not attach tokens, auth.json, login URLs, device codes, or private conversations."
+  - type: input
+    id: version
+    attributes:
+      label: App version and branch
+      placeholder: "1.1.6, multi_platform_support, installed build or development"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and desktop version
+      placeholder: "Windows 11; macOS 15; Ubuntu 24.04 / GNOME / Wayland"
+    validations:
+      required: true
+  - type: input
+    id: codex
+    attributes:
+      label: Codex version and plan (optional)
+      description: "Run codex --version. Do not include account identifiers."
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the expected result and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove credentials, login links, device codes, personal paths, and private content.
