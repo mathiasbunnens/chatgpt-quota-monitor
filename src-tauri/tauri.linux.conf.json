@@ -3,7 +3,7 @@
   "bundle": {
     "targets": [
       "deb",
-      "AppImage"
+      "appimage"
     ]
   }
 }

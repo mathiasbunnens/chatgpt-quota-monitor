@@ -454,13 +454,14 @@ fn render_native_menu(app: &tauri::AppHandle) {
                     PROGRESS_WIDTH * f64::from(percentage) / 100.0,
                     8.0,
                 ));
-                fill.setFillColor(&if percentage <= 20 {
+                let color = if percentage <= 20 {
                     NSColor::systemRedColor()
                 } else if percentage <= 40 {
                     NSColor::systemOrangeColor()
                 } else {
                     NSColor::systemGreenColor()
-                });
+                };
+                fill.setFillColor(&color);
             }
             menu.addItem(&item);
             menu.addItem(&NSMenuItem::separatorItem(mtm));
