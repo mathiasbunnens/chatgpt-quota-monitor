@@ -20,7 +20,9 @@
     "createUpdaterArtifacts": true,
     "targets": [
       "app",
-      "dmg"
+      "dmg",
+      "deb",
+      "appimage"
     ],
     "icon": [
       "icons/32x32.png",
