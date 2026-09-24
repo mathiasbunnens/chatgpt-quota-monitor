@@ -13,6 +13,7 @@ const RECENT_RELOAD_INTERVAL_MS = 5 * 60_000;
 const IDLE_RELOAD_INTERVAL_MS = 10 * 60_000;
 const ACTIVE_QUOTA_WINDOW_MS = 10 * 60_000;
 const RECENT_QUOTA_WINDOW_MS = 30 * 60_000;
+const DOM_READ_INTERVAL_MS = 5_000;
 const USAGE_PAGE_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage";
 const USAGE_PAGE_PATTERNS = [
   "https://chatgpt.com/codex/settings/usage*",
@@ -24,6 +25,7 @@ const USAGE_PAGE_PATTERNS = [
 let refreshCheckInFlight = false;
 let connectionCheckInFlight = false;
 let backgroundTabCreationInFlight;
+let backgroundSyncInFlight;
 let quotaActivityUpdate = Promise.resolve();
 
 function isUsagePage(url = "") {
@@ -164,7 +166,7 @@ async function reloadUsageTab(tabId) {
   await chrome.tabs.reload(tabId);
 }
 
-async function syncBackgroundUsageTab(options = {}) {
+async function performBackgroundUsageSync(options = {}) {
   const tab = await getBackgroundUsageTab(options);
   if (tab?.id === undefined) return false;
 
@@ -186,6 +188,14 @@ async function syncBackgroundUsageTab(options = {}) {
 
   if (!(await readUsagePage(tab.id))) await reloadUsageTab(tab.id);
   return true;
+}
+
+function syncBackgroundUsageTab(options = {}) {
+  if (backgroundSyncInFlight) return backgroundSyncInFlight;
+  backgroundSyncInFlight = performBackgroundUsageSync(options).finally(() => {
+    backgroundSyncInFlight = undefined;
+  });
+  return backgroundSyncInFlight;
 }
 
 async function reportConnectionStatus() {
@@ -288,6 +298,9 @@ setInterval(() => {
   void checkForForcedRefresh();
   void reportConnectionStatus();
 }, 2_000);
+setInterval(() => {
+  void syncBackgroundUsageTab();
+}, DOM_READ_INTERVAL_MS);
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "quota-codex-browser") return undefined;

@@ -63,7 +63,7 @@ Puis :
 3. Ouvre directement <https://chatgpt.com/codex/settings/usage>.
 4. Attends quelques secondes, puis clique sur le widget dans la barre des menus.
 
-L’extension transmet immédiatement les limites détectées. Elle recommence lors d’une modification de la page et toutes les 60 secondes. Il n’est pas nécessaire de garder le menu du widget ouvert.
+L’extension transmet immédiatement les limites détectées. Elle recommence lors d’une modification de la page et relit le DOM toutes les 5 secondes. Il n’est pas nécessaire de garder le menu du widget ouvert.
 
 ## 5. Comprendre les couleurs
 
