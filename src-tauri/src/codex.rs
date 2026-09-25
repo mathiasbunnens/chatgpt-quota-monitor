@@ -204,9 +204,13 @@ fn discover(override_path: Option<String>) -> Option<PathBuf> {
             .map(PathBuf::from),
         );
         #[cfg(target_os = "macos")]
-        paths.push(PathBuf::from(
-            "/Applications/Codex.app/Contents/Resources/codex",
-        ));
+        paths.extend(
+            [
+                "/Applications/Codex.app/Contents/Resources/codex",
+                "/Applications/ChatGPT.app/Contents/Resources/codex",
+            ]
+            .map(PathBuf::from),
+        );
     }
     if let Some(search) = std::env::var_os("PATH") {
         let name = if cfg!(target_os = "windows") {
