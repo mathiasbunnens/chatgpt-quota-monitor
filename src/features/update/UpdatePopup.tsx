@@ -53,7 +53,7 @@ export default function UpdatePopup() {
       {phase === "available" && <button disabled={busy} onClick={() => void run("start_update_install")}>Télécharger et installer</button>}
       {phase === "ready" && <button className="update-popup__primary" disabled={busy} onClick={() => void run("restart_application")}>Quitter et relancer</button>}
       {phase === "error" && <button disabled={busy} onClick={() => void run("start_update_check")}>Réessayer</button>}
-      {(phase === "up-to-date" || phase === "error") && <button disabled={busy} onClick={() => void run("close_update_window")}>Fermer</button>}
+      {(phase === "up-to-date" || phase === "error") && <button disabled={busy} onClick={() => void run("dismiss_update_window")}>Fermer</button>}
     </div>
   </main>;
 }

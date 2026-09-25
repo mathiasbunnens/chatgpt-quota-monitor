@@ -324,9 +324,9 @@ fn start_update_install(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn close_update_window(app: tauri::AppHandle) {
+fn dismiss_update_window(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("updater") {
-        let _ = window.close();
+        let _ = window.hide();
     }
 }
 
@@ -442,6 +442,8 @@ fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaP
     let five = |p: &QuotaPayload| {
         !reserve(p) && (p.period == "five-hour" || p.window_minutes == Some(300))
     };
+    let weekly =
+        |p: &QuotaPayload| !reserve(p) && (p.period == "weekly" || p.window_minutes == Some(10080));
     rows.sort_by_key(|p| {
         (
             !five(p),
@@ -452,8 +454,11 @@ fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaP
     if plan != Some("plus") {
         return rows;
     }
+    let weeklies: Vec<_> = rows.iter().filter(|p| weekly(p)).cloned().collect();
     if let Some(active) = rows.iter().find(|p| five(p) && p.remaining > 0) {
-        return vec![active.clone()];
+        let mut visible = vec![active.clone()];
+        visible.extend(weeklies);
+        return visible;
     }
     let reserves: Vec<_> = rows
         .iter()
@@ -464,11 +469,13 @@ fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaP
         .cloned()
         .collect();
     if !reserves.is_empty() {
-        return reserves;
+        let mut visible = weeklies;
+        visible.extend(reserves);
+        return visible;
     }
-    // An exhausted five-hour quota is hidden even if reserve is unavailable.
+    // Keep the actual weekly quota even if an exhausted five-hour quota has no reserve.
     if rows.iter().any(five) {
-        return Vec::new();
+        return weeklies;
     }
     // Weekly-only accounts keep the actual window reported by Codex.
     rows
@@ -609,8 +616,16 @@ fn render_native_menu(app: &tauri::AppHandle) {
             }
             menu.addItem(&connection);
         }
+        if connection_phase == "ready" {
+            let refresh = NSMenuItem::new(mtm);
+            refresh.setTitle(&NSString::from_str("Actualiser les quotas"));
+            unsafe {
+                refresh.setTarget(Some(target));
+                refresh.setAction(Some(objc2::sel!(refreshQuota:)));
+            }
+            menu.addItem(&refresh);
+        }
         for (title, action) in [
-            ("Actualiser les quotas", objc2::sel!(refreshQuota:)),
             ("Voir les détails sur Codex…", objc2::sel!(openUsage:)),
             ("Vérifier les mises à jour…", objc2::sel!(checkForUpdates:)),
         ] {
@@ -925,7 +940,7 @@ pub fn run() {
             get_update_status,
             start_update_check,
             start_update_install,
-            close_update_window,
+            dismiss_update_window,
             restart_application,
             codex::get_codex_status,
             codex::set_refresh_settings,
@@ -993,12 +1008,13 @@ mod tests {
             "luna-reserve": {"primary":{"usedPercent":30,"windowDurationMins":10080}}
         }})).unwrap();
         assert_eq!(visible_quotas(rows.clone(), Some("plus"))[0].remaining, 80);
-        assert_eq!(visible_quotas(rows.clone(), Some("plus")).len(), 1);
+        assert_eq!(visible_quotas(rows.clone(), Some("plus")).len(), 2);
         assert_eq!(visible_quotas(rows.clone(), Some("pro")).len(), 3);
         rows[0].remaining = 0;
         let selected = visible_quotas(rows.clone(), Some("plus"));
-        assert_eq!(selected.len(), 1);
-        assert!(selected[0].period.contains("luna-reserve"));
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].window_minutes, Some(10080));
+        assert!(selected[1].period.contains("luna-reserve"));
         rows[0].remaining = 1;
         assert_eq!(visible_quotas(rows, Some("plus"))[0].remaining, 1);
     }
@@ -1006,6 +1022,19 @@ mod tests {
     fn missing_reserve_is_not_fabricated() {
         let rows = codex::normalize(&serde_json::json!({"rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":300}}})).unwrap();
         assert!(visible_quotas(rows, Some("plus")).is_empty());
+    }
+
+    #[test]
+    fn plus_keeps_weekly_when_five_hour_is_exhausted_without_reserve() {
+        let rows = codex::normalize(&serde_json::json!({"rateLimits":{
+            "primary":{"usedPercent":100,"windowDurationMins":300},
+            "secondary":{"usedPercent":35,"windowDurationMins":10080}
+        }}))
+        .unwrap();
+        let selected = visible_quotas(rows, Some("plus"));
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].remaining, 65);
+        assert_eq!(selected[0].window_minutes, Some(10080));
     }
 
     #[test]
