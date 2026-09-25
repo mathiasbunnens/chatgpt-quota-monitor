@@ -17,10 +17,6 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - os: macos-latest
-            args: --target universal-apple-darwin
-          - os: windows-latest
-            args: ""
           - os: ubuntu-22.04
             args: ""
     runs-on: ${{ matrix.os }}
