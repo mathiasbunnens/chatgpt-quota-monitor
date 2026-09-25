@@ -386,10 +386,6 @@ define_class!(
                 provider.login(false);
             }
         }
-        #[unsafe(method(refreshQuota:))]
-        fn refresh_quota(&self, _sender: Option<&AnyObject>) {
-            if let Some(app) = APP_HANDLE.get() { request_quota_refresh(app.clone()); }
-        }
         #[unsafe(method(openUsage:))]
         fn open_usage(&self, _sender: Option<&AnyObject>) {
             open_usage_page();
@@ -615,15 +611,6 @@ fn render_native_menu(app: &tauri::AppHandle) {
                 connection.setAction(Some(objc2::sel!(connectAccount:)));
             }
             menu.addItem(&connection);
-        }
-        if connection_phase == "ready" {
-            let refresh = NSMenuItem::new(mtm);
-            refresh.setTitle(&NSString::from_str("Actualiser les quotas"));
-            unsafe {
-                refresh.setTarget(Some(target));
-                refresh.setAction(Some(objc2::sel!(refreshQuota:)));
-            }
-            menu.addItem(&refresh);
         }
         for (title, action) in [
             ("Voir les détails sur Codex…", objc2::sel!(openUsage:)),
