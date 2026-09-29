@@ -1,4 +1,13 @@
-//! Fixed contrast numeric badge: readable against light and dark taskbars.
+//! Numeric badge with the same thresholds and colors as the dashboard progress bar.
+fn quota_color(value: Option<u32>) -> [u8; 4] {
+    match value {
+        Some(0..=20) => [0xe5, 0x48, 0x4d, 255],
+        Some(21..=40) => [0xd6, 0x8b, 0x12, 255],
+        Some(_) => [0x30, 0xa4, 0x6c, 255],
+        None => [255, 255, 255, 255],
+    }
+}
+
 pub fn icon(value: Option<u32>) -> tauri::image::Image<'static> {
     let glyphs: [[u8; 5]; 11] = [
         [7, 5, 5, 5, 7],
@@ -23,9 +32,10 @@ pub fn icon(value: Option<u32>) -> tauri::image::Image<'static> {
             rgba[i..i + 4].copy_from_slice(&[28, 28, 30, 255]);
         }
     }
+    let color = quota_color(value);
     let mut pixel = |x: usize, y: usize| {
         let i = (y * 32 + x) * 4;
-        rgba[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+        rgba[i..i + 4].copy_from_slice(&color);
     };
     let scale = if text.len() < 3 { 4 } else { 2 };
     let height_scale = 5;
@@ -54,6 +64,22 @@ pub fn icon(value: Option<u32>) -> tauri::image::Image<'static> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn rendered_digits_match_dashboard_color_boundaries() {
+        for (value, expected) in [
+            (None, [255, 255, 255, 255]),
+            (Some(0), [0xe5, 0x48, 0x4d, 255]),
+            (Some(20), [0xe5, 0x48, 0x4d, 255]),
+            (Some(21), [0xd6, 0x8b, 0x12, 255]),
+            (Some(40), [0xd6, 0x8b, 0x12, 255]),
+            (Some(41), [0x30, 0xa4, 0x6c, 255]),
+            (Some(100), [0x30, 0xa4, 0x6c, 255]),
+        ] {
+            let image = super::icon(value);
+            assert!(image.rgba().chunks_exact(4).any(|pixel| pixel == expected));
+        }
+    }
+
+    #[test]
     fn badge_handles_all_values() {
         for n in [
             None,
@@ -69,7 +95,7 @@ mod tests {
             assert!(image
                 .rgba()
                 .chunks_exact(4)
-                .any(|p| p == [255, 255, 255, 255]));
+                .any(|p| p[3] == 255 && p != [28, 28, 30, 255]));
         }
         assert_ne!(super::icon(Some(0)).rgba(), super::icon(Some(100)).rgba());
     }
