@@ -19,8 +19,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const subscription = listen("open-refresh-settings", () => setShowRefresh(true)).catch(() => () => {});
-    const updates = listen<string>("update-status", (event) => setError(event.payload)).catch(() => () => {});
-    return () => { void subscription.then((unlisten) => unlisten()); void updates.then((unlisten) => unlisten()); };
+    return () => { void subscription.then((unlisten) => unlisten()); };
   }, []);
 
   useEffect(() => {
@@ -62,6 +61,7 @@ export default function Dashboard() {
     try { await invoke("open_usage_details"); }
     catch (cause) { setError(String(cause)); }
   };
+  const isConnected = status?.phase === "ready";
   const needsSetup = snapshots.length === 0 && status?.phase !== "ready";
 
   return <main className="dashboard">
@@ -70,7 +70,7 @@ export default function Dashboard() {
       <div className="dashboard__actions">
         <button onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Actualisation…" : "Actualiser"}</button>
         <button onClick={() => setShowRefresh(true)} aria-label="Réglages d’actualisation">Réglages</button>
-        <button onClick={() => setShowSetup((value) => !value)} aria-expanded={showSetup}>{showSetup ? "Masquer les réglages" : "Connexion"}</button>
+        {!isConnected && <button onClick={() => setShowSetup((value) => !value)} aria-expanded={showSetup}>{showSetup ? "Masquer la connexion" : "Connexion"}</button>}
       </div>
     </header>
     <p className="dashboard__source" role="status">
@@ -98,6 +98,6 @@ export default function Dashboard() {
     </footer>
     <p className="dashboard__strategy">Actualisation {status?.refreshSettings.customSeconds ? "personnalisée" : "dynamique"} · toutes les {status?.refreshSeconds || 120} s</p>
     {showRefresh && <RefreshSettings status={status} onClose={() => setShowRefresh(false)} onChange={reload} />}
-    {(showSetup || needsSetup) && <CodexConnection status={status} onChange={reload} />}
+    {!isConnected && (showSetup || needsSetup) && <CodexConnection status={status} onChange={reload} />}
   </main>;
 }

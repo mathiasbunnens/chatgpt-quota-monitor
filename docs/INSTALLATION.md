@@ -5,11 +5,11 @@
 - Windows : lance `*-setup.exe`, puis Quota Codex depuis la page de fin ou le menu Démarrer.
 - Linux Debian : `sudo apt install ./nom-du-paquet.deb`.
 - Linux AppImage : rends le fichier exécutable puis lance-le ; FUSE peut être nécessaire.
-- macOS : copie l’application du DMG dans Applications. Fermer la fenêtre conserve le menu natif.
+- macOS : copie l’application du DMG dans Applications. L’application reste uniquement dans la barre des menus et n’ouvre pas de tableau de bord.
 
 ## Connexion directe à Codex
 
-Codex CLI doit être installé séparément. Une installation compatible déjà connectée à ChatGPT suffit. Sinon, clique sur **Connexion → Installer Codex**, puis **Détection automatique** après son installation. Un chemin complet peut être défini dans **Emplacement de Codex**. Sous Windows, choisis `codex.exe`.
+Codex CLI doit être installé séparément. Une installation compatible déjà connectée à ChatGPT suffit. Sur macOS, l’entrée **Connexion** apparaît dans le menu tant que le compte n’est pas connecté, puis disparaît automatiquement. Sur Windows et Linux, ouvre **Connexion** dans le tableau de bord. Un chemin complet peut être défini dans **Emplacement de Codex** ; sous Windows, choisis `codex.exe`.
 
 **Se connecter avec ChatGPT** ouvre l’autorisation dans le navigateur. **Connexion par code** permet de la terminer sur un autre appareil si cette méthode est activée dans les paramètres du compte ou de l’espace de travail. Après connexion, le navigateur peut être fermé. Codex conserve la session.
 
