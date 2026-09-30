@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Use the Windows GUI subsystem in both debug installers and release builds.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 fn main() {
     chatgpt_quota_monitor_lib::run()

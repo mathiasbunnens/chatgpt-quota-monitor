@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import RefreshSettings from "../../features/setup/RefreshSettings";
+import ResetCredits from "../../features/quota/ResetCredits";
 import { useCallback, useEffect, useState } from "react";
 import CodexConnection from "../../features/setup/CodexConnection";
 import { formatResetDate, quotaLabel, quotaPercentage } from "../../features/quota/providers";
@@ -92,6 +93,7 @@ export default function Dashboard() {
       })}
     </section>
     {status?.phase === "ready" && !snapshots.length && <p className="dashboard__source">Aucun quota à afficher. La réserve peut ne pas être communiquée par Codex ; consultez la page de détails pour vérifier.</p>}
+    <ResetCredits status={status} onChange={reload} />
     <footer className="dashboard__footer">
       <span>{snapshots[0]?.checkedAt ? "Vérifié : " + new Date(snapshots[0].checkedAt).toLocaleTimeString("fr-FR") : "Aucune donnée reçue"}</span>
       <button onClick={() => void openDetails()}>Voir les détails sur Codex ↗</button>

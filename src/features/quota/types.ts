@@ -21,5 +21,6 @@ export type CodexStatus = {
   planType: string | null;
   activeInstances: number | null;
   refreshSeconds: number;
+  availableResets: number | null;
   refreshSettings: { customSeconds: number | null };
 };
