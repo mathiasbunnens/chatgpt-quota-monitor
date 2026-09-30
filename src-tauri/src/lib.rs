@@ -892,6 +892,8 @@ fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let tray = tray.show_menu_on_left_click(false);
     if let Err(error) = tray.build(app) {
         eprintln!("Quota Codex tray unavailable: {error}");
+        // A hidden startup must remain recoverable if tray creation fails.
+        let _ = window.show();
     } else {
         // Linux may report success without a visible tray host. Closing its window
         // therefore exits normally; minimizing keeps the bridge running.
@@ -957,6 +959,10 @@ pub fn run() {
             .title("Quota Codex")
             .inner_size(500.0, 620.0)
             .min_inner_size(360.0, 420.0)
+            .visible(
+                !(cfg!(target_os = "windows")
+                    && std::env::args_os().any(|arg| arg == "--autostart")),
+            )
             .build()?;
             #[cfg(target_os = "macos")]
             app.handle()
