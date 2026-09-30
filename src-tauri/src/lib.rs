@@ -931,6 +931,7 @@ pub fn run() {
             restart_application,
             codex::get_codex_status,
             codex::set_refresh_settings,
+            codex::redeem_codex_reset,
             codex::start_codex_login,
             codex::cancel_codex_login,
             codex::set_codex_path,

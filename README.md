@@ -130,6 +130,8 @@ npm ci
 npm run tauri dev
 ```
 
+Les réinitialisations supplémentaires sont affichées lorsque Codex fournit leur nombre. Le bouton de confirmation utilise une réinitialisation disponible, sans achat, puis relit les quotas. Une réponse inconnue conserve la même demande pour éviter une double consommation. Les crédits payants et l’éventuelle recharge automatique se gèrent sur la page officielle Codex : aucune programmation de paiement n’est exposée par l’interface utilisée. Nécessite une version de Codex prenant en charge [les réinitialisations de quota](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
+
 Vérifications locales :
 
 ```sh
