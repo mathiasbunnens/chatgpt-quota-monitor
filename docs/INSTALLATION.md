@@ -7,6 +7,18 @@
 - Linux AppImage : rends le fichier exécutable puis lance-le ; FUSE peut être nécessaire.
 - macOS : copie l’application du DMG dans Applications. L’application reste uniquement dans la barre des menus et n’ouvre pas de tableau de bord.
 
+## Démarrage automatique sous Windows
+
+L’installeur propose **Lancer Quota Codex à l’ouverture de session**, coché par défaut lors de la première installation. Décoche la case pour refuser. Les installations suivantes conservent le choix de l’installeur. L’enregistrement concerne uniquement l’utilisateur courant, sans droits administrateur.
+
+À l’ouverture de session, l’application démarre dans la zone de notification, sans tableau de bord ni terminal. Clique sur son icône pour ouvrir le tableau de bord. Un lancement normal depuis le menu Démarrer ouvre toujours la fenêtre. Si la création de l’icône échoue, la fenêtre s’affiche pour garder l’application accessible.
+
+Pour désactiver le lancement automatique ensuite : **Paramètres Windows → Applications → Démarrage → Quota Codex**. L’installeur ne réinitialise pas ce blocage Windows. La désinstallation supprime l’entrée de démarrage ; une mise à jour la conserve.
+
+Installation silencieuse : `/S` utilise le choix enregistré, ou active le démarrage par défaut en l’absence de choix. `/S /AUTOSTART=0` désactive explicitement l’enregistrement ; `/S /AUTOSTART=1` l’active. Un blocage défini dans les paramètres Windows reste prioritaire.
+
+Cette option d’installeur concerne Windows. Les paquets macOS et Linux ne modifient pas le démarrage automatique.
+
 ## Connexion directe à Codex
 
 Codex CLI doit être installé séparément. Une installation compatible déjà connectée à ChatGPT suffit. Sur macOS, l’entrée **Connexion** apparaît dans le menu tant que le compte n’est pas connecté, puis disparaît automatiquement. Sur Windows et Linux, ouvre **Connexion** dans le tableau de bord. Un chemin complet peut être défini dans **Emplacement de Codex** ; sous Windows, choisis `codex.exe`.

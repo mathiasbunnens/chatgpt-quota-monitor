@@ -1,4 +1,4 @@
-//! Read-only Codex account client. Never creates threads or starts agent turns.
+//! Codex account client. Resets require an explicit action; never starts agent turns.
 use crate::{set_codex_snapshots, QuotaPayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,6 +30,7 @@ pub struct Status {
     pub active_instances: Option<usize>,
     pub refresh_seconds: u64,
     pub refresh_settings: RefreshSettings,
+    pub available_resets: Option<u64>,
 }
 impl Default for Status {
     fn default() -> Self {
@@ -44,6 +45,7 @@ impl Default for Status {
             active_instances: None,
             refresh_seconds: 120,
             refresh_settings: RefreshSettings::default(),
+            available_resets: None,
         }
     }
 }
@@ -120,6 +122,9 @@ impl Shared {
         if let Ok(mut status) = self.status.lock() {
             status.phase = phase.into();
             status.message = message.into();
+            if phase != "ready" {
+                status.available_resets = None;
+            }
             if phase != "logging_in" {
                 status.auth_url = None;
                 status.user_code = None;
@@ -142,6 +147,7 @@ impl Shared {
     }
 }
 enum Action {
+    Redeem(String, Sender<Result<String, String>>),
     Refresh,
     Reschedule,
     Login(bool),
@@ -447,6 +453,26 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(_) => break,
         };
+        if let Some(Action::Redeem(key, reply)) = action {
+            let ready = shared.status.lock().unwrap().phase == "ready";
+            let result = if ready && login.is_none() {
+                session
+                    .as_mut()
+                    .ok_or_else(|| "Service Codex indisponible.".to_owned())
+                    .and_then(|client| {
+                        client.call(
+                            "account/rateLimitResetCredit/consume",
+                            json!({"idempotencyKey":key}),
+                        )
+                    })
+                    .and_then(|value| reset_outcome(&value))
+            } else {
+                Err("Reconnecte Codex avant de réessayer.".into())
+            };
+            let _ = reply.send(result);
+            next_poll = Instant::now();
+            continue;
+        }
         if Instant::now() >= next_activity {
             let count = detector.count();
             let mut status = shared.status.lock().unwrap();
@@ -599,7 +625,11 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                 match account["account"]["type"].as_str() {
                     Some("chatgpt" | "chatgptAuthTokens") => client
                         .call("account/rateLimits/read", Value::Null)
-                        .and_then(|v| normalize(&v).map(Some)),
+                        .and_then(|v| {
+                            let rows = normalize(&v)?;
+                            shared.status.lock().unwrap().available_resets = available_resets(&v);
+                            Ok(Some(rows))
+                        }),
                     _ => Ok(None),
                 }
             });
@@ -644,6 +674,46 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
 #[tauri::command]
 pub fn get_codex_status(provider: State<'_, Provider>) -> Status {
     provider.status()
+}
+fn available_resets(value: &Value) -> Option<u64> {
+    value["rateLimitResetCredits"]["availableCount"].as_u64()
+}
+fn reset_outcome(value: &Value) -> Result<String, String> {
+    match value["outcome"].as_str() {
+        Some(outcome @ ("reset" | "alreadyRedeemed" | "nothingToReset" | "noCredit")) => {
+            Ok(outcome.into())
+        }
+        _ => Err("Réponse inconnue. Vérifie les quotas avant de réessayer.".into()),
+    }
+}
+#[tauri::command]
+pub async fn redeem_codex_reset(
+    provider: State<'_, Provider>,
+    idempotency_key: String,
+) -> Result<String, String> {
+    // Only UUID-shaped keys are accepted. Retries must retain the original key.
+    if idempotency_key.len() != 36
+        || !idempotency_key.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+    {
+        return Err("Identifiant de réinitialisation invalide.".into());
+    }
+    let (tx, rx) = mpsc::channel();
+    provider
+        .tx
+        .send(Action::Redeem(idempotency_key, tx))
+        .map_err(|_| "Service Codex indisponible.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv()
+            .map_err(|_| "Service Codex interrompu.".to_owned())?
+    })
+    .await
+    .map_err(|_| "Réinitialisation interrompue.".to_owned())?
 }
 #[tauri::command]
 pub fn start_codex_login(provider: State<'_, Provider>, device: bool) -> Result<(), String> {
@@ -720,6 +790,33 @@ pub fn open_codex_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reset_count_preserves_unknown_and_uses_authoritative_count() {
+        assert_eq!(available_resets(&json!({})), None);
+        assert_eq!(
+            available_resets(&json!({"rateLimitResetCredits":null})),
+            None
+        );
+        assert_eq!(
+            available_resets(&json!({"rateLimitResetCredits":{"availableCount":0}})),
+            Some(0)
+        );
+        assert_eq!(
+            available_resets(&json!({"rateLimitResetCredits":{"availableCount":3,"credits":[]}})),
+            Some(3)
+        );
+        assert_eq!(
+            available_resets(&json!({"rateLimitResetCredits":{"availableCount":-1}})),
+            None
+        );
+    }
+    #[test]
+    fn reset_outcomes_do_not_infer_quota() {
+        for outcome in ["reset", "alreadyRedeemed", "nothingToReset", "noCredit"] {
+            assert_eq!(reset_outcome(&json!({"outcome":outcome})).unwrap(), outcome);
+        }
+        assert!(reset_outcome(&json!({})).is_err());
+    }
     #[test]
     fn oversized_protocol_messages_are_rejected() {
         assert!(read_protocol_line(&mut std::io::Cursor::new(vec![b'x'; 1_048_577])).is_err());
@@ -826,6 +923,10 @@ mod tests {
             .call("account/rateLimits/read", Value::Null)
             .unwrap();
         let rows = normalize(&result).unwrap();
+        println!(
+            "Available earned resets reported by Codex: {:?}",
+            available_resets(&result)
+        );
         println!(
             "Validated {} quota windows; no account or credential fields printed.",
             rows.len()

@@ -26,14 +26,16 @@ Le quota hebdomadaire reste visible dès lors qu’il est fourni par Codex. Lors
 
 ## Fonctionnement
 
-Quota Codex utilise directement **Codex App Server** en lecture seule :
+Quota Codex utilise directement **Codex App Server** pour consulter les quotas :
 
 1. l’application détecte une installation compatible de Codex ;
 2. Codex réutilise la connexion ChatGPT déjà présente, ou propose une connexion si nécessaire ;
-3. Quota Codex demande uniquement l’état du compte et les fenêtres de quota ;
+3. Quota Codex demande l’état du compte et les fenêtres de quota ;
 4. les valeurs sont actualisées automatiquement en arrière-plan.
 
 Il n’y a **aucune extension navigateur**, aucun cookie copié et aucun serveur HTTP local. La page d’utilisation Codex peut être ouverte pour consulter les détails, mais elle n’a pas besoin de rester ouverte.
+
+La consommation d’une réinitialisation supplémentaire est une action distincte, disponible uniquement après confirmation explicite dans l’application.
 
 ## Installation rapide
 
@@ -68,6 +70,8 @@ Quota Codex est une application **menu-bar only** : aucune fenêtre principale n
 ### Windows
 
 Le tableau de bord donne accès aux quotas, à la connexion et aux réglages d’actualisation. Fermer la fenêtre la masque lorsque l’icône de notification est disponible ; l’action **Quitter** arrête réellement l’application.
+
+L’installeur propose le lancement à l’ouverture de session, activé par défaut pour une première installation et désactivable. Ce lancement automatique reste dans la zone de notification sans ouvrir de fenêtre. Les détails et options silencieuses figurent dans le [guide d’installation](docs/INSTALLATION.md#démarrage-automatique-sous-windows).
 
 ### Linux
 
@@ -129,6 +133,8 @@ Prérequis : Node.js 22, npm, Rust stable et les [dépendances Tauri 2](https://
 npm ci
 npm run tauri dev
 ```
+
+Les réinitialisations supplémentaires sont affichées lorsque Codex fournit leur nombre. Le bouton de confirmation utilise une réinitialisation disponible, sans achat, puis relit les quotas. Une réponse inconnue conserve la même demande pour éviter une double consommation. Les crédits payants et l’éventuelle recharge automatique se gèrent sur la page officielle Codex : aucune programmation de paiement n’est exposée par l’interface utilisée. Nécessite une version de Codex prenant en charge [les réinitialisations de quota](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
 
 Vérifications locales :
 
