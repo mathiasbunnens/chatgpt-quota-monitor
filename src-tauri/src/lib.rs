@@ -57,6 +57,7 @@ struct QuotaState(Mutex<Vec<QuotaPayload>>);
 
 fn publish_quotas(app: &tauri::AppHandle) {
     render_native_menu(app);
+    let _ = app.emit("quota-updated", ());
 }
 
 fn set_codex_snapshots(app: &tauri::AppHandle, snapshots: Option<Vec<QuotaPayload>>) {

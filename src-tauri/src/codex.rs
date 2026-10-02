@@ -147,12 +147,32 @@ impl Shared {
     }
 }
 enum Action {
-    Redeem(String, Sender<Result<String, String>>),
+    Redeem(String, Sender<Result<RedemptionResult, String>>),
     Refresh,
     Reschedule,
     Login(bool),
     CancelLogin,
     Reconnect,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedemptionResult {
+    outcome: String,
+    quotas_refreshed: bool,
+}
+
+fn poll_due(now: Instant, next_poll: Instant, reset_pending: bool) -> bool {
+    reset_pending || now >= next_poll
+}
+
+fn redemption_result(
+    outcome: Result<String, String>,
+    quotas_refreshed: bool,
+) -> Result<RedemptionResult, String> {
+    outcome.map(|outcome| RedemptionResult {
+        outcome,
+        quotas_refreshed,
+    })
 }
 pub struct Provider {
     shared: Arc<Shared>,
@@ -448,30 +468,32 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
     let mut failures = 0_u32;
     let mut login: Option<(String, Instant)> = None;
     while !shared.stop.load(Ordering::Acquire) {
-        let action = match rx.recv_timeout(Duration::from_millis(250)) {
+        let mut action = match rx.recv_timeout(Duration::from_millis(250)) {
             Ok(action) => Some(action),
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(_) => break,
         };
-        if let Some(Action::Redeem(key, reply)) = action {
-            let ready = shared.status.lock().unwrap().phase == "ready";
-            let result = if ready && login.is_none() {
-                session
-                    .as_mut()
-                    .ok_or_else(|| "Service Codex indisponible.".to_owned())
-                    .and_then(|client| {
-                        client.call(
-                            "account/rateLimitResetCredit/consume",
-                            json!({"idempotencyKey":key}),
-                        )
-                    })
-                    .and_then(|value| reset_outcome(&value))
-            } else {
-                Err("Reconnecte Codex avant de réessayer.".into())
+        let mut pending_reset = None;
+        if matches!(action, Some(Action::Redeem(..))) {
+            let Some(Action::Redeem(key, reply)) = action.take() else {
+                unreachable!()
             };
-            let _ = reply.send(result);
-            next_poll = Instant::now();
-            continue;
+            let ready = shared.status.lock().unwrap().phase == "ready";
+            if !ready || login.is_some() || session.is_none() {
+                let _ = reply.send(Err("Reconnecte Codex avant de réessayer.".into()));
+                continue;
+            }
+            let result = session
+                .as_mut()
+                .unwrap()
+                .call(
+                    "account/rateLimitResetCredit/consume",
+                    json!({"idempotencyKey":key}),
+                )
+                .and_then(|value| reset_outcome(&value));
+            // Read and publish in this iteration, before acknowledging the reset.
+            // Activity changes must not defer this read to the adaptive interval.
+            pending_reset = Some((reply, result));
         }
         if Instant::now() >= next_activity {
             let count = detector.count();
@@ -608,7 +630,7 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                 _ => {}
             }
         }
-        if login.is_some() || Instant::now() < next_poll {
+        if login.is_some() || !poll_due(Instant::now(), next_poll, pending_reset.is_some()) {
             continue;
         }
         let result = client
@@ -633,6 +655,7 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                     _ => Ok(None),
                 }
             });
+        let quotas_refreshed = matches!(&result, Ok(Some(_)));
         match result {
             Ok(Some(snapshots)) => {
                 let empty = snapshots.is_empty();
@@ -644,8 +667,8 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                         "Quotas synchronisés directement avec Codex."
                     },
                 );
-                set_codex_snapshots(&app, Some(snapshots));
                 shared.status.lock().unwrap().last_checked = Some(chrono::Utc::now().to_rfc3339());
+                set_codex_snapshots(&app, Some(snapshots));
                 failures = 0;
                 next_poll = Instant::now()
                     + Duration::from_secs(shared.status.lock().unwrap().refresh_seconds);
@@ -667,6 +690,11 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                         (15 * (1 << failures)).max(shared.status.lock().unwrap().refresh_seconds),
                     );
             }
+        }
+        if let Some((reply, outcome)) = pending_reset {
+            // A confirmed redemption remains confirmed even if the following read
+            // fails. The UI must not invite spending a second reset in that case.
+            let _ = reply.send(redemption_result(outcome, quotas_refreshed));
         }
     }
 }
@@ -690,7 +718,7 @@ fn reset_outcome(value: &Value) -> Result<String, String> {
 pub async fn redeem_codex_reset(
     provider: State<'_, Provider>,
     idempotency_key: String,
-) -> Result<String, String> {
+) -> Result<RedemptionResult, String> {
     // Only UUID-shaped keys are accepted. Retries must retain the original key.
     if idempotency_key.len() != 36
         || !idempotency_key.bytes().enumerate().all(|(i, b)| {
@@ -790,6 +818,29 @@ pub fn open_codex_login(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reset_refresh_bypasses_an_adaptive_poll_delay() {
+        let now = Instant::now();
+        // Reproduce the activity detector extending the interval to five minutes.
+        let next_poll = now + Duration::from_secs(300);
+        assert!(!poll_due(now, next_poll, false));
+        assert!(poll_due(now, next_poll, true));
+        assert!(poll_due(next_poll, next_poll, false));
+    }
+    #[test]
+    fn a_failed_refresh_does_not_undo_a_confirmed_reset() {
+        for outcome in ["reset", "alreadyRedeemed", "nothingToReset", "noCredit"] {
+            let result = redemption_result(Ok(outcome.into()), false).unwrap();
+            assert_eq!(result.outcome, outcome);
+            assert!(!result.quotas_refreshed);
+        }
+        assert!(
+            redemption_result(Ok("reset".into()), true)
+                .unwrap()
+                .quotas_refreshed
+        );
+        assert!(redemption_result(Err("unknown outcome".into()), true).is_err());
+    }
     #[test]
     fn reset_count_preserves_unknown_and_uses_authoritative_count() {
         assert_eq!(available_resets(&json!({})), None);
