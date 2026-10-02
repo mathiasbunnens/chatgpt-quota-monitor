@@ -4,8 +4,8 @@ import type { CodexStatus } from "./types";
 
 const pendingKey = "codex-pending-reset";
 const outcomes: Record<string, string> = {
-  reset: "Réinitialisation utilisée. Actualisation des quotas…",
-  alreadyRedeemed: "Cette réinitialisation a déjà été appliquée. Actualisation des quotas…",
+  reset: "Réinitialisation utilisée.",
+  alreadyRedeemed: "Cette réinitialisation a déjà été appliquée.",
   nothingToReset: "Aucune limite éligible à réinitialiser pour le moment.",
   noCredit: "Aucune réinitialisation disponible sur ce compte.",
 };
@@ -27,10 +27,13 @@ export default function ResetCredits({ status, onChange }: { status: CodexStatus
       // Persist before sending so a lost reply or restart cannot spend a second reset.
       const key = pending || crypto.randomUUID();
       localStorage.setItem(pendingKey, key); setPending(key);
-      const outcome = await invoke<string>("redeem_codex_reset", { idempotencyKey: key });
+      const { outcome, quotasRefreshed } = await invoke<{ outcome: string; quotasRefreshed: boolean }>("redeem_codex_reset", { idempotencyKey: key });
       if (!outcomes[outcome]) throw new Error("Réponse inconnue.");
       localStorage.removeItem(pendingKey); setPending(null);
-      setMessage(outcomes[outcome]); setConfirming(false); onChange();
+      setMessage(outcomes[outcome] + (quotasRefreshed
+        ? " Quotas actualisés."
+        : " Impossible d’actualiser les quotas. Utilise Actualiser lorsque la connexion est rétablie ; ne consomme pas une autre réinitialisation pour cette tentative."));
+      setConfirming(false); onChange();
     } catch {
       setMessage("Résultat non confirmé. Vérifie la connexion et la version de Codex, puis réessaie la même demande pour éviter de consommer deux réinitialisations.");
     } finally { inFlight.current = false; setBusy(false); }

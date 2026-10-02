@@ -20,8 +20,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     const subscription = listen("open-refresh-settings", () => setShowRefresh(true)).catch(() => () => {});
-    return () => { void subscription.then((unlisten) => unlisten()); };
-  }, []);
+    const quotas = listen("quota-updated", reload).catch(() => () => {});
+    return () => { void subscription.then((unlisten) => unlisten()); void quotas.then((unlisten) => unlisten()); };
+  }, [reload]);
 
   useEffect(() => {
     let disposed = false;
