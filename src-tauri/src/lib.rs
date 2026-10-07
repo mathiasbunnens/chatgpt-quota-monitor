@@ -432,50 +432,71 @@ fn get_quota_snapshots(app: tauri::AppHandle) -> Vec<QuotaPayload> {
 }
 
 fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaPayload> {
-    let reserve = |p: &QuotaPayload| {
-        let identity = format!("{} {}", p.period, p.model).to_ascii_lowercase();
-        identity.contains("reserve") || identity.contains("luna")
-    };
+    let reserve = |p: &QuotaPayload| is_reserve(p);
     let five = |p: &QuotaPayload| {
         !reserve(p) && (p.period == "five-hour" || p.window_minutes == Some(300))
     };
     let weekly =
         |p: &QuotaPayload| !reserve(p) && (p.period == "weekly" || p.window_minutes == Some(10080));
-    rows.sort_by_key(|p| {
-        (
-            !five(p),
-            !p.period.starts_with("codex:codex:"),
-            p.period.clone(),
-        )
-    });
+    let five_active = rows.iter().any(|p| five(p) && p.remaining > 0);
+    rows.sort_by_key(|p| quota_order(p, &five, &weekly, &reserve, five_active));
     if plan != Some("plus") {
         return rows;
     }
-    let weeklies: Vec<_> = rows.iter().filter(|p| weekly(p)).cloned().collect();
-    if let Some(active) = rows.iter().find(|p| five(p) && p.remaining > 0) {
-        let mut visible = vec![active.clone()];
-        visible.extend(weeklies);
-        return visible;
-    }
-    let reserves: Vec<_> = rows
+    let relevant: Vec<_> = rows
         .iter()
-        .filter(|p| {
-            let identity = format!("{} {}", p.period, p.model).to_ascii_lowercase();
-            identity.contains("reserve") || identity.contains("luna")
-        })
+        .filter(|p| five(p) || weekly(p) || reserve(p))
         .cloned()
         .collect();
-    if !reserves.is_empty() {
-        let mut visible = weeklies;
-        visible.extend(reserves);
-        return visible;
+    let has_reserve = rows.iter().any(reserve);
+    if !has_reserve && rows.iter().any(five) {
+        return rows.into_iter().filter(weekly).collect();
     }
-    // Keep the actual weekly quota even if an exhausted five-hour quota has no reserve.
-    if rows.iter().any(five) {
-        return weeklies;
+    if relevant.is_empty() {
+        rows
+    } else {
+        relevant
     }
-    // Weekly-only accounts keep the actual window reported by Codex.
-    rows
+}
+
+fn is_reserve(payload: &QuotaPayload) -> bool {
+    let identity = format!("{} {}", payload.period, payload.model).to_ascii_lowercase();
+    identity.contains("reserve")
+        || identity.contains("luna")
+        || identity.contains("base_model_inference")
+}
+
+fn quota_order(
+    payload: &QuotaPayload,
+    five: &impl Fn(&QuotaPayload) -> bool,
+    weekly: &impl Fn(&QuotaPayload) -> bool,
+    reserve: &impl Fn(&QuotaPayload) -> bool,
+    five_active: bool,
+) -> (u8, bool, String) {
+    let rank = if five_active {
+        if five(payload) {
+            0
+        } else if weekly(payload) {
+            1
+        } else if reserve(payload) {
+            2
+        } else {
+            3
+        }
+    } else if reserve(payload) {
+        0
+    } else if weekly(payload) {
+        1
+    } else if five(payload) {
+        2
+    } else {
+        3
+    };
+    (
+        rank,
+        !payload.period.starts_with("codex:codex:"),
+        payload.period.clone(),
+    )
 }
 
 #[tauri::command]
@@ -508,7 +529,7 @@ fn reset_label(payload: &QuotaPayload) -> String {
     DateTime::parse_from_rfc3339(&payload.reset_at)
         .map(|date| {
             let local = date.with_timezone(&Local);
-            if payload.period == "five-hour" {
+            if payload.period == "five-hour" || payload.window_minutes == Some(300) {
                 local.format("%Hh%M").to_string()
             } else {
                 local.format("%d/%m à %Hh%M").to_string()
@@ -662,6 +683,9 @@ fn open_refresh_settings(app: &tauri::AppHandle) {
 }
 
 fn quota_label(payload: &QuotaPayload) -> String {
+    if is_reserve(payload) {
+        return "Réserve".into();
+    }
     payload
         .label
         .clone()
@@ -1000,17 +1024,27 @@ mod tests {
     fn plus_switches_from_five_hour_to_reserve() {
         let mut rows = codex::normalize(&serde_json::json!({"rateLimitsByLimitId": {
             "codex": {"primary": {"usedPercent":20,"windowDurationMins":300}, "secondary":{"usedPercent":10,"windowDurationMins":10080}},
-            "luna-reserve": {"primary":{"usedPercent":30,"windowDurationMins":10080}}
+            "base_model_inference": {"primary":{"usedPercent":30,"windowDurationMins":10080}}
         }})).unwrap();
-        assert_eq!(visible_quotas(rows.clone(), Some("plus"))[0].remaining, 80);
-        assert_eq!(visible_quotas(rows.clone(), Some("plus")).len(), 2);
-        assert_eq!(visible_quotas(rows.clone(), Some("pro")).len(), 3);
-        rows[0].remaining = 0;
         let selected = visible_quotas(rows.clone(), Some("plus"));
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].window_minutes, Some(10080));
-        assert!(selected[1].period.contains("luna-reserve"));
-        rows[0].remaining = 1;
+        assert_eq!(selected.len(), 3);
+        assert_eq!(selected[0].window_minutes, Some(300));
+        assert_eq!(selected[1].window_minutes, Some(10080));
+        assert!(selected[2].period.contains("base_model_inference"));
+        assert_eq!(visible_quotas(rows.clone(), Some("pro")).len(), 3);
+        rows.iter_mut()
+            .find(|row| row.window_minutes == Some(300))
+            .unwrap()
+            .remaining = 0;
+        let selected = visible_quotas(rows.clone(), Some("plus"));
+        assert_eq!(selected.len(), 3);
+        assert!(selected[0].period.contains("base_model_inference"));
+        assert_eq!(selected[1].window_minutes, Some(10080));
+        assert_eq!(selected[2].window_minutes, Some(300));
+        rows.iter_mut()
+            .find(|row| row.window_minutes == Some(300))
+            .unwrap()
+            .remaining = 1;
         assert_eq!(visible_quotas(rows, Some("plus"))[0].remaining, 1);
     }
     #[test]

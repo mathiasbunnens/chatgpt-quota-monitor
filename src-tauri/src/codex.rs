@@ -418,6 +418,18 @@ pub fn normalize(result: &Value) -> Result<Vec<QuotaPayload>, String> {
                 Some(value) => format!("{value} min"),
                 None => slot.into(),
             };
+            let is_reserve = id.to_ascii_lowercase().contains("reserve")
+                || id.to_ascii_lowercase().contains("luna")
+                || id.to_ascii_lowercase().contains("base_model_inference");
+            let display_label = if is_reserve {
+                "Réserve".into()
+            } else if mins == Some(300) {
+                "5h".into()
+            } else if mins == Some(10080) {
+                "7j".into()
+            } else {
+                format!("{name} · {duration}")
+            };
             let reset = window
                 .get("resetsAt")
                 .and_then(Value::as_i64)
@@ -434,7 +446,7 @@ pub fn normalize(result: &Value) -> Result<Vec<QuotaPayload>, String> {
                 period: format!("codex:{id}:{slot}"),
                 reset_label: None,
                 source: "codex".into(),
-                label: Some(format!("{name} · {duration}")),
+                label: Some(display_label),
                 window_minutes: mins,
             });
         }
@@ -933,7 +945,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].remaining, 41);
         assert_eq!(rows[0].period, "codex:codex:secondary");
-        assert!(rows[0].label.as_ref().unwrap().contains("7 jours"));
+        assert_eq!(rows[0].label.as_deref(), Some("7j"));
         assert!(rows[1].reset_at.is_empty());
     }
     #[test]
