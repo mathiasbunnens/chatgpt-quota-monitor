@@ -440,9 +440,9 @@ pub fn normalize(result: &Value) -> Result<Vec<QuotaPayload>, String> {
             let display_label = if is_reserve {
                 "Réserve".into()
             } else if mins == Some(300) {
-                "5h".into()
+                "Codex · 5 heures".into()
             } else if mins == Some(10080) {
-                "7j".into()
+                "Codex · 7 jours".into()
             } else {
                 format!("{name} · {duration}")
             };
@@ -961,7 +961,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].remaining, 41);
         assert_eq!(rows[0].period, "codex:codex:secondary");
-        assert_eq!(rows[0].label.as_deref(), Some("7j"));
+        assert_eq!(rows[0].label.as_deref(), Some("Codex · 7 jours"));
         assert!(rows[1].reset_at.is_empty());
     }
     #[test]
