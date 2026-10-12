@@ -219,7 +219,15 @@ fn discover(override_path: Option<String>) -> Option<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         if let Some(home) = std::env::var_os("HOME") {
-            paths.push(PathBuf::from(home).join(".local/bin/codex"));
+            let home = PathBuf::from(home);
+            paths.push(home.join(".local/bin/codex"));
+            paths.push(home.join(".volta/bin/codex"));
+            paths.push(home.join(".asdf/shims/codex"));
+            if let Ok(versions) = fs::read_dir(home.join(".nvm/versions/node")) {
+                for version in versions.flatten() {
+                    paths.push(version.path().join("bin/codex"));
+                }
+            }
         }
         paths.extend(
             [
@@ -281,6 +289,14 @@ impl Drop for Session {
 impl Session {
     fn start(path: &PathBuf, shared: Arc<Shared>) -> Result<Self, String> {
         let mut command = Command::new(path);
+        if let Some(bin) = path.parent().filter(|dir| dir.join("node").is_file()) {
+            let mut search_path = bin.to_string_lossy().into_owned();
+            if let Some(existing) = std::env::var_os("PATH") {
+                search_path.push(':');
+                search_path.push_str(&existing.to_string_lossy());
+            }
+            command.env("PATH", search_path);
+        }
         command
             .arg("app-server")
             .stdin(Stdio::piped())
