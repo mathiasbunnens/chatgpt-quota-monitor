@@ -448,10 +448,6 @@ fn visible_quotas(mut rows: Vec<QuotaPayload>, plan: Option<&str>) -> Vec<QuotaP
         .filter(|p| five(p) || weekly(p) || reserve(p))
         .cloned()
         .collect();
-    let has_reserve = rows.iter().any(reserve);
-    if !has_reserve && rows.iter().any(five) {
-        return rows.into_iter().filter(weekly).collect();
-    }
     if relevant.is_empty() {
         rows
     } else {
@@ -1050,20 +1046,20 @@ mod tests {
     #[test]
     fn missing_reserve_is_not_fabricated() {
         let rows = codex::normalize(&serde_json::json!({"rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":300}}})).unwrap();
-        assert!(visible_quotas(rows, Some("plus")).is_empty());
+        assert_eq!(visible_quotas(rows, Some("plus")).len(), 1);
     }
 
     #[test]
-    fn plus_keeps_weekly_when_five_hour_is_exhausted_without_reserve() {
+    fn plus_keeps_both_windows_without_reserve() {
         let rows = codex::normalize(&serde_json::json!({"rateLimits":{
-            "primary":{"usedPercent":100,"windowDurationMins":300},
+            "primary":{"usedPercent":4,"windowDurationMins":300},
             "secondary":{"usedPercent":35,"windowDurationMins":10080}
         }}))
         .unwrap();
         let selected = visible_quotas(rows, Some("plus"));
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].remaining, 65);
-        assert_eq!(selected[0].window_minutes, Some(10080));
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].window_minutes, Some(300));
+        assert_eq!(selected[1].window_minutes, Some(10080));
     }
 
     #[test]
