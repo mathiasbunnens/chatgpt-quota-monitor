@@ -36,13 +36,13 @@ export default function UpdatePopup() {
   const title = phase === "ready"
     ? "Mise à jour prête"
     : phase === "up-to-date"
-      ? "Quota Codex est à jour"
+      ? "Quota Monitor est à jour"
       : phase === "error"
         ? "Mise à jour impossible"
-        : "Mise à jour de Quota Codex";
+        : "Mise à jour de Quota Monitor";
 
   return <main className="update-popup">
-    <p className="update-popup__eyebrow">Quota Codex {status?.currentVersion && `v${status.currentVersion}`}</p>
+    <p className="update-popup__eyebrow">Quota Monitor {status?.currentVersion && `v${status.currentVersion}`}</p>
     <h1>{title}</h1>
     <p className="update-popup__message" role="status">{status?.message ?? "Recherche d’une nouvelle version…"}</p>
     {(phase === "downloading" || phase === "ready") && <div className="update-popup__progress">

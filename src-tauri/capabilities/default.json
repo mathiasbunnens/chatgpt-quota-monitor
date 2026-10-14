@@ -4,7 +4,8 @@
   "description": "Capability for the main window",
   "windows": [
     "main",
-    "updater"
+    "updater",
+    "settings"
   ],
   "permissions": [
     "core:event:allow-listen",
