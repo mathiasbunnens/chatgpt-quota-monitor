@@ -195,6 +195,38 @@ pub struct ClaudeSnapshot {
     pub error_kind: Option<&'static str>,
     pub metrics: Vec<Metric>,
     pub capability: Capability,
+    /// Subscription reported by get_usage (e.g. "pro", "max"); never account identity.
+    pub plan_type: Option<String>,
+    /// Paid extra usage on top of the subscription: enabled / limit reached.
+    pub extra_usage: Option<ExtraUsage>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraUsage {
+    pub enabled: bool,
+    pub limit_reached: bool,
+}
+
+/// Keeps only a short plan token such as "pro" or "max_20x".
+pub fn plan_token(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 24)
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+        .map(str::to_ascii_lowercase)
+}
+
+pub fn extra_usage(value: &serde_json::Value) -> Option<ExtraUsage> {
+    let enabled = value["is_enabled"].as_bool()?;
+    Some(ExtraUsage {
+        enabled,
+        limit_reached: value["spend_limit_reached"].as_bool().unwrap_or(false),
+    })
 }
 
 pub enum FileState {
@@ -261,6 +293,8 @@ pub fn compute(enabled: bool, configured: bool, file: FileState, now: i64) -> Cl
         capability: Capability {
             refresh: "event_only",
         },
+        plan_type: None,
+        extra_usage: None,
     };
     if !enabled {
         snap.message = "Claude est désactivé dans les Réglages.".into();
@@ -476,6 +510,8 @@ fn refresh_live(app: &tauri::AppHandle) {
             };
             let mut s = compute(true, true, FileState::Data(data), now);
             s.message = "Quotas lus à la demande via Claude Code.".into();
+            s.plan_type = plan_token(&value["subscription_type"]);
+            s.extra_usage = extra_usage(&limits["extra_usage"]);
             s
         }
         Ok(_) => {
@@ -767,5 +803,22 @@ mod tests {
             0o700
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn plan_and_extra_usage_keep_only_safe_scalars() {
+        use serde_json::json;
+        assert_eq!(plan_token(&json!("Pro")), Some("pro".into()));
+        assert_eq!(plan_token(&json!("max_20x")), Some("max_20x".into()));
+        assert_eq!(plan_token(&json!("me@example.com")), None);
+        assert_eq!(plan_token(&json!(null)), None);
+        assert_eq!(
+            extra_usage(&json!({"is_enabled": true, "spend_limit_reached": true})),
+            Some(ExtraUsage {
+                enabled: true,
+                limit_reached: true
+            })
+        );
+        assert_eq!(extra_usage(&json!(null)), None);
     }
 }

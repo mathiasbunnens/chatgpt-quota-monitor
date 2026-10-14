@@ -6,7 +6,7 @@ Le backend utilise le binaire officiel Claude Code, et non un client HTTP qui r�
 
 Installer Claude Code et exécuter `claude auth login` dans son terminal. Dans Quota Monitor → Réglages → Fournisseurs, activer Claude. Aucun relais statusLine n'est nécessaire et les réglages Claude Code ne sont pas modifiés automatiquement. Le bouton de retrait d'un ancien relais reste disponible explicitement.
 
-Réglages → Barre des menus : Codex, Claude ou les deux. Chaque fournisseur conserve son état et ses erreurs. Deux fournisseurs actifs sont affichés côte à côte dans le menu macOS ; un seul occupe sa largeur. La limite courte est visible ; les détails hebdomadaires et resets sont disponibles au survol de Détails… et au clic dans la fenêtre de détails.
+Réglages → Barre des menus : Codex, Claude ou les deux. Chaque fournisseur conserve son état et ses erreurs. Sur macOS, l’application se limite au menu de la barre des menus et à la fenêtre Réglages : le menu affiche un en-tête d’état (À jour, Lecture…, Erreur) puis une carte par fournisseur actif avec toutes ses limites (5 heures, hebdomadaire, réserve), leur réinitialisation et les erreurs. Les deux fournisseurs utilisent les mêmes libellés et le même ordre : la limite courte puis la limite hebdomadaire, nommées par le temps restant avant réinitialisation (« Limite sur 1h38 », « Limite sur 7j2h ») ; l’abonnement (Plus, Pro…) s’affiche à côté du nom. Avec « Les deux », l’indicateur de la barre des menus empile « Codex » et « Claude » sur deux lignes, toujours sur la limite 5 heures. Il n’y a plus de fenêtre de détails : les liens d’usage détaillé (chatgpt.com, claude.ai), les réinitialisations Codex (icône et nombre restant, dans l’en-tête Codex) et l’usage supplémentaire Claude (indicateur « Extra » lorsqu’il est activé) se trouvent dans Réglages → Fournisseurs, fenêtre qui s’ajuste à son contenu.
 
 ## Transport
 
@@ -22,6 +22,6 @@ Actualisation périodique : cadence des Réglages, minimum 15 s pour Claude. Act
 - Tests Rust du protocole sur fixture : parsing, absence, zéro, date, échange structuré et fermeture du processus.
 - Test réel opt-in : `cargo test --locked --manifest-path src-tauri/Cargo.toml claude_cli::tests::live_official_cli -- --ignored` (sans inférence).
 - Exécutable packagé : `--claude-usage-smoke <dossier scratch>` appelle le transport de production et affiche uniquement les fenêtres de quotas.
-- `--quota-ui-smoke <dossier PNG>` rend les vraies vues natives avec des données de démonstration, sans fenêtre visible (une et deux colonnes).
+- `--quota-ui-smoke <dossier PNG>` rend le vrai panneau du menu avec des données de démonstration, sans fenêtre visible (deux fournisseurs, erreur Codex, Claude en lecture, aucun fournisseur ; clair et sombre).
 
 Les tests hors écran ne valident pas les gestes physiques de survol/clavier ni la réouverture/focus des fenêtres Réglages. Ceux-ci nécessitent une session graphique et l'accès d'accessibilité ; ne pas les déclarer réussis sur la base d'une compilation.

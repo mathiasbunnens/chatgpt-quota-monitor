@@ -22,6 +22,8 @@ pub struct Indicator {
     pub tooltip: String,
     /// Single value usable for a numeric tray icon (non-macOS).
     pub icon_value: Option<u32>,
+    /// Two providers shown: (full name, value) lines stacked in the macOS menu bar.
+    pub stack: Vec<(&'static str, String)>,
 }
 
 fn piece(d: Display) -> String {
@@ -79,7 +81,16 @@ pub fn compute(choice: &str, codex: Option<Display>, claude: Option<Display>) ->
         Some(Display::Percent(p)) => Some(*p),
         _ => None,
     });
+    let stack = if shown.len() == 2 {
+        shown
+            .iter()
+            .map(|(name, _, d)| (*name, piece(d.unwrap_or(Display::Pending))))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Indicator {
+        stack,
         title,
         tooltip: format!("Quota Monitor\n{}", parts.join("\n")),
         icon_value,
@@ -107,6 +118,13 @@ mod tests {
     fn both_shows_labelled_values() {
         let i = compute("both", Some(Percent(62)), Some(Percent(0)));
         assert_eq!(i.title, "CX 62% · CL 0%");
+        assert_eq!(
+            i.stack,
+            vec![("Codex", "62%".to_string()), ("Claude", "0%".to_string())]
+        );
+        assert!(compute("codex", Some(Percent(62)), Some(Percent(0)))
+            .stack
+            .is_empty());
         assert_eq!(i.icon_value, Some(62));
     }
 

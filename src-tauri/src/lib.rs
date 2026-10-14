@@ -63,9 +63,6 @@ use objc2_foundation::{
     MainThreadMarker, NSData, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 
-#[cfg(target_os = "macos")]
-const PROGRESS_WIDTH: f64 = 248.0;
-
 #[derive(Debug, Serialize, Clone)]
 struct QuotaPayload {
     model: String,
@@ -372,14 +369,6 @@ fn restart_application(app: tauri::AppHandle) {
 
 #[derive(Clone, Copy)]
 #[cfg(target_os = "macos")]
-struct QuotaViewHandles {
-    value: usize,
-    reset: usize,
-    fill: usize,
-}
-
-#[derive(Clone, Copy)]
-#[cfg(target_os = "macos")]
 struct NativeQuotaMenu {
     status_item: usize,
     status_button: usize,
@@ -401,7 +390,13 @@ define_class!(
     unsafe impl NSMenuDelegate for QuotaMenuTarget {
         #[unsafe(method(menuWillOpen:))]
         fn menu_will_open(&self, _menu: &NSMenu) {
+            MENU_OPEN.store(true, Ordering::Release);
             if let Some(app) = APP_HANDLE.get() { request_quota_refresh(app.clone()); }
+        }
+
+        #[unsafe(method(menuDidClose:))]
+        fn menu_did_close(&self, _menu: &NSMenu) {
+            MENU_OPEN.store(false, Ordering::Release);
         }
     }
 
@@ -421,21 +416,7 @@ define_class!(
                 provider.login(false);
             }
         }
-        #[unsafe(method(openUsage:))]
-        fn open_usage(&self, _sender: Option<&AnyObject>) {
-            open_usage_page();
-        }
 
-        #[unsafe(method(openQuotaDashboard:))]
-        fn open_quota_dashboard(&self, _sender: Option<&AnyObject>) {
-            if let Some(app) = APP_HANDLE.get().cloned() {
-                tauri::async_runtime::spawn(async move {
-                    let window = if let Some(w) = app.get_webview_window("main") { Some(w) }
-                    else { tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).title("Quota Monitor — Détails").inner_size(720.0, 580.0).build().ok() };
-                    if let Some(w) = window { let _ = w.show(); let _ = w.set_focus(); }
-                });
-            }
-        }
         #[unsafe(method(openSettings:))]
         fn open_settings_action(&self, _sender: Option<&AnyObject>) {
             if let Some(app) = APP_HANDLE.get().cloned() { open_settings_async(app); }
@@ -568,8 +549,8 @@ fn show_settings_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             tauri::WebviewUrl::App("index.html".into()),
         )
         .title("Réglages de Quota Monitor")
-        .inner_size(600.0, 560.0)
-        .min_inner_size(520.0, 420.0)
+        .inner_size(600.0, 520.0)
+        .min_inner_size(520.0, 240.0)
         .center()
         .build()?
     };
@@ -598,6 +579,46 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_settings_window(&app).map_err(|e| e.to_string())
 }
 
+/// Fits the Settings window to its content height (logical px), within the screen.
+#[tauri::command]
+fn fit_settings_window(window: tauri::WebviewWindow, height: f64) -> Result<(), String> {
+    if window.label() != "settings" || !height.is_finite() {
+        return Ok(());
+    }
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let width = window
+        .inner_size()
+        .map_err(|e| e.to_string())?
+        .to_logical::<f64>(scale)
+        .width;
+    let max = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            m.work_area()
+                .size
+                .to_logical::<f64>(m.scale_factor())
+                .height
+                - 40.0
+        })
+        .unwrap_or(900.0);
+    window
+        .set_size(tauri::LogicalSize::new(
+            width,
+            height.clamp(240.0, max.max(240.0)),
+        ))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_claude_usage(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url("https://claude.ai/settings/usage", None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn open_usage_details(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -607,29 +628,6 @@ fn open_usage_details(app: tauri::AppHandle) -> Result<(), String> {
             None::<&str>,
         )
         .map_err(|e| e.to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn open_usage_page() {
-    if let Some(app) = APP_HANDLE.get() {
-        let _ = open_usage_details(app.clone());
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn reset_label(payload: &QuotaPayload) -> String {
-    DateTime::parse_from_rfc3339(&payload.reset_at)
-        .map(|date| {
-            let local = date.with_timezone(&Local);
-            if payload.period == "five-hour" || payload.window_minutes == Some(300) {
-                local.format("%Hh%M").to_string()
-            } else {
-                local.format("%d/%m à %Hh%M").to_string()
-            }
-        })
-        .ok()
-        .or_else(|| payload.reset_label.clone())
-        .unwrap_or_else(|| "--".to_string())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -659,6 +657,534 @@ fn quota_color(percentage: u32) -> Retained<NSColor> {
         .unwrap_or(from_color)
 }
 
+// ---------------------------------------------------------------------------
+// Menu-bar panel (macOS). The menu IS the dashboard: every limit of every
+// active provider is visible without a second window. The panel model is pure
+// so its wording and priorities are unit-tested; the AppKit view only lays it
+// out. Inspired by the SublerAutomation popup: header + status capsule, one
+// card per provider, uppercase section titles.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+const PANEL_WIDTH: f64 = 320.0;
+#[cfg(target_os = "macos")]
+const PANEL_HEADER_HEIGHT: f64 = 54.0;
+#[cfg(target_os = "macos")]
+const PANEL_ROW_HEIGHT: f64 = 48.0;
+#[cfg(target_os = "macos")]
+const PANEL_INNER_WIDTH: f64 = 276.0;
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tone {
+    Neutral,
+    Good,
+    Warning,
+    Error,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+struct PanelRow {
+    label: String,
+    remaining: Option<u32>,
+    value: String,
+    reset: String,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+struct PanelProvider {
+    name: &'static str,
+    badge: Option<String>,
+    rows: Vec<PanelRow>,
+    note: Option<(String, Tone)>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+struct PanelHeader {
+    subtitle: String,
+    status: &'static str,
+    tone: Tone,
+}
+
+#[cfg(target_os = "macos")]
+fn value_text(remaining: Option<u32>, exhausted: bool, missing: &str) -> String {
+    match remaining {
+        Some(0) => "Épuisé".into(),
+        Some(_) if exhausted => "Épuisé".into(),
+        Some(p) => format!("{p} %"),
+        None => missing.into(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reset_phrase(rfc3339: &str, short_window: bool) -> Option<String> {
+    DateTime::parse_from_rfc3339(rfc3339).ok().map(|date| {
+        let local = date.with_timezone(&Local);
+        if short_window {
+            local.format("Réinitialisation à %Hh%M").to_string()
+        } else {
+            local
+                .format("Réinitialisation le %d/%m à %Hh%M")
+                .to_string()
+        }
+    })
+}
+
+/// "1h38", "7j2h", "42 min": time left before a window resets.
+#[cfg(any(target_os = "macos", test))]
+fn remaining_span(seconds: i64) -> String {
+    let minutes = (seconds.max(0) + 59) / 60;
+    let (days, hours, mins) = (minutes / 1440, minutes % 1440 / 60, minutes % 60);
+    match (days, hours) {
+        (0, 0) => format!("{mins} min"),
+        (0, h) => format!("{h}h{mins:02}"),
+        (d, 0) => format!("{d}j"),
+        (d, h) => format!("{d}j {h}h"),
+    }
+}
+
+/// "Limite sur 1h38" while the reset is known and ahead, otherwise the window name.
+#[cfg(target_os = "macos")]
+fn limit_label(reset_at: Option<&str>, fallback: &str) -> String {
+    reset_at
+        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+        .map(|at| at.timestamp() - Local::now().timestamp())
+        .filter(|left| *left > 0)
+        .map(|left| format!("Limite sur {}", remaining_span(left)))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn codex_panel(
+    rows: &[QuotaPayload],
+    phase: &str,
+    message: &str,
+    plan: Option<String>,
+) -> PanelProvider {
+    // Same vocabulary and order for every provider: 5 heures, hebdomadaire, réserve.
+    let rank = |p: &QuotaPayload| -> u8 {
+        if is_reserve(p) {
+            2
+        } else if p.period == "five-hour" || p.window_minutes == Some(300) {
+            0
+        } else if p.period == "weekly" || p.window_minutes == Some(10080) {
+            1
+        } else {
+            3
+        }
+    };
+    let mut ordered: Vec<&QuotaPayload> = rows.iter().collect();
+    ordered.sort_by_key(|p| rank(p));
+    let rows: Vec<PanelRow> = ordered
+        .into_iter()
+        .map(|p| {
+            let short = rank(p) == 0;
+            let remaining = p.remaining.min(100);
+            PanelRow {
+                label: match rank(p) {
+                    0 => limit_label(Some(&p.reset_at), "Limite 5 heures"),
+                    1 => limit_label(Some(&p.reset_at), "Limite hebdomadaire"),
+                    2 => "Réserve".into(),
+                    _ => quota_label(p),
+                },
+                remaining: Some(remaining),
+                value: value_text(Some(remaining), false, ""),
+                reset: reset_phrase(&p.reset_at, short)
+                    .or_else(|| {
+                        p.reset_label
+                            .as_ref()
+                            .map(|l| format!("Réinitialisation : {l}"))
+                    })
+                    .unwrap_or_else(|| "Réinitialisation non communiquée".into()),
+            }
+        })
+        .collect();
+    let note = match phase {
+        "ready" if rows.is_empty() => {
+            Some(("Aucune limite communiquée par Codex.".into(), Tone::Neutral))
+        }
+        "ready" => None,
+        "error" => Some((
+            non_empty(message, "Lecture de Codex impossible."),
+            Tone::Error,
+        )),
+        _ => Some((non_empty(message, "Connexion à Codex…"), Tone::Warning)),
+    };
+    PanelProvider {
+        name: "Codex",
+        badge: plan,
+        rows,
+        note,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn claude_panel(snapshot: &claude::ClaudeSnapshot) -> PanelProvider {
+    let rows: Vec<PanelRow> = snapshot
+        .metrics
+        .iter()
+        .map(|m| {
+            let remaining = m
+                .used_percent
+                .filter(|_| m.availability == "available")
+                .map(remaining_percent);
+            let missing = if m.availability == "unavailable" {
+                "En attente"
+            } else {
+                "—"
+            };
+            PanelRow {
+                label: if remaining.is_some() {
+                    limit_label(m.reset_at.as_deref(), m.label)
+                } else {
+                    m.label.to_string()
+                },
+                remaining,
+                value: value_text(remaining, m.exhausted, missing),
+                reset: m
+                    .reset_at
+                    .as_deref()
+                    .and_then(|at| reset_phrase(at, m.period_duration_seconds <= 18000))
+                    .unwrap_or_else(|| "Réinitialisation non communiquée".into()),
+            }
+        })
+        .collect();
+    let note = match snapshot.state {
+        "error" | "unavailable" | "auth_required" => Some((
+            non_empty(
+                &snapshot.message,
+                "Lecture impossible : vérifiez Claude Code.",
+            ),
+            Tone::Error,
+        )),
+        "waiting_for_data" => Some(("Lecture via Claude Code…".into(), Tone::Warning)),
+        "stale" => Some((
+            "Données anciennes, nouvelle lecture en cours.".into(),
+            Tone::Warning,
+        )),
+        _ if rows.is_empty() => Some((
+            "Aucune limite communiquée par Claude Code.".into(),
+            Tone::Neutral,
+        )),
+        _ => None,
+    };
+    PanelProvider {
+        name: "Claude",
+        badge: snapshot.plan_type.clone(),
+        rows,
+        note,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn non_empty(text: &str, fallback: &str) -> String {
+    if text.trim().is_empty() {
+        fallback.into()
+    } else {
+        text.trim().into()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn panel_header(providers: &[PanelProvider], last_refresh: Option<DateTime<Local>>) -> PanelHeader {
+    let tones: Vec<Tone> = providers
+        .iter()
+        .filter_map(|p| p.note.as_ref().map(|n| n.1))
+        .collect();
+    let (status, tone) = if providers.is_empty() {
+        ("Inactif", Tone::Neutral)
+    } else if tones.contains(&Tone::Error) {
+        ("Erreur", Tone::Error)
+    } else if tones.contains(&Tone::Warning) {
+        ("Lecture…", Tone::Warning)
+    } else {
+        ("À jour", Tone::Good)
+    };
+    let subtitle = if providers.is_empty() {
+        "Activez Codex ou Claude dans les Réglages".into()
+    } else {
+        last_refresh
+            .map(|at| at.format("Actualisé à %Hh%M").to_string())
+            .unwrap_or_else(|| "En attente des premières données".into())
+    };
+    PanelHeader {
+        subtitle,
+        status,
+        tone,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn note_lines(text: &str) -> f64 {
+    // ~46 characters per line at 11 pt across the card's inner width.
+    (text.chars().count() as f64 / 46.0).ceil().clamp(1.0, 4.0)
+}
+
+#[cfg(target_os = "macos")]
+fn card_height(provider: &PanelProvider) -> f64 {
+    let rows = provider.rows.len() as f64 * PANEL_ROW_HEIGHT;
+    let note = provider
+        .note
+        .as_ref()
+        .map(|(text, _)| note_lines(text) * 14.0 + if provider.rows.is_empty() { 0.0 } else { 4.0 })
+        .unwrap_or(0.0);
+    16.0 + rows + note
+}
+
+#[cfg(target_os = "macos")]
+fn panel_height(providers: &[PanelProvider]) -> f64 {
+    PANEL_HEADER_HEIGHT
+        + providers
+            .iter()
+            .map(|p| 20.0 + card_height(p) + 10.0)
+            .sum::<f64>()
+        + if providers.is_empty() { 0.0 } else { 2.0 }
+}
+
+#[cfg(target_os = "macos")]
+fn tone_color(tone: Tone) -> Retained<NSColor> {
+    match tone {
+        Tone::Good => NSColor::systemGreenColor(),
+        Tone::Warning => NSColor::systemOrangeColor(),
+        Tone::Error => NSColor::systemRedColor(),
+        Tone::Neutral => NSColor::secondaryLabelColor(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn panel_label(
+    mtm: MainThreadMarker,
+    text: &str,
+    font: &NSFont,
+    color: &NSColor,
+) -> Retained<NSTextField> {
+    let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
+    label.setFont(Some(font));
+    label.setTextColor(Some(color));
+    label.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+    label
+}
+
+#[cfg(target_os = "macos")]
+fn rounded_box(mtm: MainThreadMarker, color: &NSColor, radius: f64) -> Retained<NSBox> {
+    let shape = NSBox::initWithFrame(mtm.alloc(), frame(0.0, 0.0, 1.0, 1.0));
+    shape.setBoxType(NSBoxType::Custom);
+    shape.setBorderWidth(0.0);
+    shape.setCornerRadius(radius);
+    shape.setFillColor(color);
+    shape
+}
+
+/// Builds the menu panel view. Coordinates are written top-down and flipped.
+#[cfg(target_os = "macos")]
+fn make_panel_view(
+    mtm: MainThreadMarker,
+    header: &PanelHeader,
+    providers: &[PanelProvider],
+) -> Retained<NSView> {
+    use objc2_app_kit::{NSFontWeightRegular, NSFontWeightSemibold, NSTextAlignment};
+    let height = panel_height(providers);
+    let root = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, PANEL_WIDTH, height));
+    let place = |view: &NSView, x: f64, top: f64, w: f64, h: f64| {
+        view.setFrame(frame(x, height - top - h, w, h));
+        root.addSubview(view);
+    };
+    let (semibold, regular) = unsafe { (NSFontWeightSemibold, NSFontWeightRegular) };
+
+    // Header: name, freshness, status capsule.
+    let title = panel_label(
+        mtm,
+        "Quota Monitor",
+        &NSFont::systemFontOfSize_weight(13.0, semibold),
+        &NSColor::labelColor(),
+    );
+    place(&title, 16.0, 13.0, 190.0, 17.0);
+    let subtitle = panel_label(
+        mtm,
+        &header.subtitle,
+        &NSFont::systemFontOfSize(11.0),
+        &NSColor::secondaryLabelColor(),
+    );
+    place(&subtitle, 16.0, 31.0, 210.0, 14.0);
+    let tone = tone_color(header.tone);
+    let capsule_width = header.status.chars().count() as f64 * 6.2 + 20.0;
+    let capsule = rounded_box(mtm, &tone.colorWithAlphaComponent(0.15), 9.0);
+    place(
+        &capsule,
+        PANEL_WIDTH - 16.0 - capsule_width,
+        18.0,
+        capsule_width,
+        18.0,
+    );
+    let status = panel_label(
+        mtm,
+        header.status,
+        &NSFont::systemFontOfSize_weight(10.0, semibold),
+        &tone,
+    );
+    status.setAlignment(NSTextAlignment::Center);
+    place(
+        &status,
+        PANEL_WIDTH - 16.0 - capsule_width,
+        20.0,
+        capsule_width,
+        14.0,
+    );
+
+    let mut top = PANEL_HEADER_HEIGHT;
+    for provider in providers {
+        // Section title, like the uppercase captions of SublerAutomation.
+        let section = panel_label(
+            mtm,
+            &provider.name.to_uppercase(),
+            &NSFont::systemFontOfSize_weight(10.0, semibold),
+            &NSColor::secondaryLabelColor(),
+        );
+        place(&section, 16.0, top + 2.0, 150.0, 14.0);
+        if let Some(badge) = &provider.badge {
+            let mut chars = badge.chars();
+            let pretty = chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default();
+            let badge = panel_label(
+                mtm,
+                &pretty,
+                &NSFont::systemFontOfSize(10.0),
+                &NSColor::secondaryLabelColor(),
+            );
+            badge.setAlignment(NSTextAlignment::Right);
+            place(&badge, PANEL_WIDTH - 16.0 - 120.0, top + 2.0, 120.0, 14.0);
+        }
+        top += 20.0;
+
+        let card_h = card_height(provider);
+        let card = rounded_box(
+            mtm,
+            &NSColor::systemGrayColor().colorWithAlphaComponent(0.12),
+            10.0,
+        );
+        place(&card, 10.0, top, PANEL_WIDTH - 20.0, card_h);
+
+        let mut row_top = top + 8.0;
+        for row in &provider.rows {
+            let low = row.remaining.is_some_and(|p| p <= 20);
+            let label = panel_label(
+                mtm,
+                &row.label,
+                &NSFont::systemFontOfSize_weight(12.0, regular),
+                &NSColor::labelColor(),
+            );
+            place(&label, 20.0, row_top + 3.0, 180.0, 16.0);
+            let value_color = if low {
+                NSColor::systemRedColor()
+            } else {
+                NSColor::labelColor()
+            };
+            let value = panel_label(
+                mtm,
+                &row.value,
+                &NSFont::monospacedDigitSystemFontOfSize_weight(13.0, semibold),
+                &value_color,
+            );
+            value.setAlignment(NSTextAlignment::Right);
+            place(
+                &value,
+                24.0 + PANEL_INNER_WIDTH - 96.0,
+                row_top + 1.0,
+                96.0,
+                18.0,
+            );
+
+            let track = rounded_box(
+                mtm,
+                &NSColor::systemGrayColor().colorWithAlphaComponent(0.28),
+                2.5,
+            );
+            place(&track, 22.0, row_top + 23.0, PANEL_INNER_WIDTH, 5.0);
+            // A sub-radius fill renders as a pinched artefact: 0 % shows the track only.
+            let fill_width =
+                PANEL_INNER_WIDTH * f64::from(row.remaining.unwrap_or(0).min(100)) / 100.0;
+            if fill_width >= 5.0 {
+                let fill = rounded_box(mtm, &quota_color(row.remaining.unwrap_or(0)), 2.5);
+                place(&fill, 22.0, row_top + 23.0, fill_width, 5.0);
+            }
+            let reset = panel_label(
+                mtm,
+                &row.reset,
+                &NSFont::systemFontOfSize(10.5),
+                &NSColor::secondaryLabelColor(),
+            );
+            place(&reset, 20.0, row_top + 31.0, PANEL_INNER_WIDTH, 13.0);
+            row_top += PANEL_ROW_HEIGHT;
+        }
+        if let Some((text, tone)) = &provider.note {
+            if !provider.rows.is_empty() {
+                row_top += 4.0;
+            }
+            let note = NSTextField::wrappingLabelWithString(&NSString::from_str(text), mtm);
+            note.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+            note.setTextColor(Some(&tone_color(*tone)));
+            note.setSelectable(false);
+            place(
+                &note,
+                20.0,
+                row_top,
+                PANEL_INNER_WIDTH,
+                note_lines(text) * 14.0,
+            );
+        }
+        top += card_h + 10.0;
+    }
+    root
+}
+
+#[cfg(target_os = "macos")]
+fn latest_refresh(
+    rows: &[QuotaPayload],
+    claude_snap: Option<&claude::ClaudeSnapshot>,
+) -> Option<DateTime<Local>> {
+    let parse = |value: &str| {
+        DateTime::parse_from_rfc3339(value)
+            .ok()
+            .map(|d| d.with_timezone(&Local))
+    };
+    let codex = rows.iter().filter_map(|r| parse(&r.checked_at)).max();
+    let claude = claude_snap
+        .and_then(|s| s.observed_at.as_deref())
+        .and_then(parse);
+    codex.into_iter().chain(claude).max()
+}
+
+/// The menu is being tracked: refresh its panel in place instead of swapping menus.
+#[cfg(target_os = "macos")]
+static MENU_OPEN: AtomicBool = AtomicBool::new(false);
+/// Panel item of the menu currently attached to the status item (main thread only).
+#[cfg(target_os = "macos")]
+static PANEL_ITEM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(target_os = "macos")]
+fn update_status_button(
+    native: &NativeQuotaMenu,
+    mtm: MainThreadMarker,
+    indicator: &indicator::Indicator,
+) {
+    unsafe {
+        let button = &*(native.status_button as *const objc2_app_kit::NSStatusBarButton);
+        if indicator.stack.is_empty() {
+            button.setImage(mascot_image(mtm).as_deref());
+            button.setTitle(&NSString::from_str(&indicator.title));
+        } else {
+            button.setImage(Some(&stacked_status_image(mtm, &indicator.stack)));
+            button.setTitle(&NSString::from_str(""));
+        }
+        button.setToolTip(Some(&NSString::from_str(&indicator.tooltip)));
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn render_native_menu(app: &tauri::AppHandle) {
     let app = app.clone();
@@ -677,171 +1203,96 @@ fn render_native_menu(app: &tauri::AppHandle) {
         let prefs = prefs::current(&app);
         let claude_snap = claude::snapshot(&app);
         let claude_visible = claude_is_visible(&claude_snap);
+        let codex_status = app
+            .try_state::<codex::Provider>()
+            .map(|provider| provider.status());
+        let connection_phase = codex_status
+            .as_ref()
+            .map(|status| status.phase.clone())
+            .unwrap_or_else(|| "starting".into());
         let mtm = MainThreadMarker::new().expect("native menu on main thread");
+        let mut providers = Vec::new();
+        if prefs.codex_enabled {
+            providers.push(codex_panel(
+                &snapshots,
+                &connection_phase,
+                codex_status
+                    .as_ref()
+                    .map(|s| s.message.as_str())
+                    .unwrap_or(""),
+                codex_status.as_ref().and_then(|s| s.plan_type.clone()),
+            ));
+        }
+        if claude_visible {
+            providers.push(claude_panel(&claude_snap));
+        }
+        let header = panel_header(
+            &providers,
+            latest_refresh(&snapshots, claude_visible.then_some(&claude_snap)),
+        );
+        let indicator = indicator_for(&app, &snapshots, &claude_snap);
+        let panel_view = make_panel_view(mtm, &header, &providers);
+        let open_item = PANEL_ITEM.load(Ordering::Acquire);
+        if MENU_OPEN.load(Ordering::Acquire) && open_item != 0 {
+            // Live update while the user keeps the menu open.
+            unsafe { (&*(open_item as *const NSMenuItem)).setView(Some(&panel_view)) };
+            update_status_button(&native, mtm, &indicator);
+            return;
+        }
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
         let target = unsafe { &*(native.target as *const QuotaMenuTarget) };
         menu.setDelegate(Some(ProtocolObject::from_ref(target)));
-        let mut cards = Vec::new();
-        if prefs.codex_enabled {
-            let short = short_codex_quota(&snapshots);
-            let details = snapshots
-                .iter()
-                .map(|p| {
-                    format!(
-                        "{} : {} % restants — reset {}",
-                        quota_label(p),
-                        p.remaining,
-                        reset_label(p)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            cards.push(("Codex", short.map(|p| p.remaining), details));
-        }
-        if claude_visible {
-            let short = claude_snap
-                .metrics
-                .iter()
-                .find(|m| m.id == "claude:five_hour" && m.availability == "available");
-            let mut details = claude_snap
-                .metrics
-                .iter()
-                .map(|m| {
-                    format!(
-                        "{} : {} — reset {}",
-                        m.label,
-                        m.used_percent
-                            .map(|u| format!("{} % restants", remaining_percent(u)))
-                            .unwrap_or_else(|| "Non communiqué".into()),
-                        m.reset_at
-                            .as_deref()
-                            .map(|at| format_reset(at, m.period_duration_seconds <= 18000))
-                            .unwrap_or_else(|| "non communiqué".into())
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !claude_snap.message.is_empty() {
-                details.push_str(&format!("\n{}", claude_snap.message));
-            }
-            let shown = if claude_snap.state == "error" {
-                None
-            } else {
-                short.and_then(|m| m.used_percent).map(remaining_percent)
-            };
-            cards.push(("Claude", shown, details));
-        }
-        if cards.is_empty() {
-            add_note(mtm, &menu, "Aucun fournisseur actif");
-        } else {
-            menu.addItem(&make_provider_columns(mtm, &cards, target));
-        }
-        let connection_phase = app
-            .try_state::<codex::Provider>()
-            .map(|provider| provider.status().phase)
-            .unwrap_or_else(|| "starting".into());
-        if prefs.codex_enabled && connection_phase != "ready" {
-            let connection = NSMenuItem::new(mtm);
-            connection.setTitle(&NSString::from_str(if connection_phase == "logging_in" {
-                "Connexion en cours…"
-            } else {
-                "Connexion à Codex…"
-            }));
-            connection.setEnabled(connection_phase != "logging_in");
-            unsafe {
-                connection.setTarget(Some(target));
-                connection.setAction(Some(objc2::sel!(connectAccount:)));
-            }
-            menu.addItem(&connection);
-        }
-        for (title, action, key) in [
-            ("Réglages…", objc2::sel!(openSettings:), ","),
-            ("Voir les détails sur Codex…", objc2::sel!(openUsage:), ""),
-            (
-                "Vérifier les mises à jour…",
-                objc2::sel!(checkForUpdates:),
-                "",
-            ),
-        ] {
+        let panel = NSMenuItem::new(mtm);
+        panel.setView(Some(&panel_view));
+        menu.addItem(&panel);
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+
+        let add_action = |title: &str, action: objc2::runtime::Sel, key: &str, enabled: bool| {
             let item = NSMenuItem::new(mtm);
             item.setTitle(&NSString::from_str(title));
             item.setKeyEquivalent(&NSString::from_str(key));
+            item.setEnabled(enabled);
             unsafe {
                 item.setTarget(Some(target));
                 item.setAction(Some(action));
             }
             menu.addItem(&item);
+        };
+        if prefs.codex_enabled && connection_phase != "ready" {
+            let logging_in = connection_phase == "logging_in";
+            add_action(
+                if logging_in {
+                    "Connexion en cours…"
+                } else {
+                    "Se connecter à Codex…"
+                },
+                objc2::sel!(connectAccount:),
+                "",
+                !logging_in,
+            );
         }
-        let quit = NSMenuItem::new(mtm);
-        quit.setTitle(&NSString::from_str("Quitter"));
-        unsafe {
-            quit.setTarget(Some(target));
-            quit.setAction(Some(objc2::sel!(quitApp:)));
-        }
-        menu.addItem(&quit);
+        add_action("Réglages…", objc2::sel!(openSettings:), ",", true);
+        add_action(
+            "Vérifier les mises à jour…",
+            objc2::sel!(checkForUpdates:),
+            "",
+            true,
+        );
+        menu.addItem(&NSMenuItem::separatorItem(mtm));
+        add_action("Quitter Quota Monitor", objc2::sel!(quitApp:), "q", true);
         menu.addItem(&make_version_item(
             mtm,
             &app.package_info().version.to_string(),
         ));
-        let indicator = indicator_for(&app, &snapshots, &claude_snap);
         unsafe {
             let item = &*(native.status_item as *const objc2_app_kit::NSStatusItem);
             item.setMenu(Some(&menu));
-            let button = &*(native.status_button as *const objc2_app_kit::NSStatusBarButton);
-            button.setTitle(&NSString::from_str(&indicator.title));
-            button.setToolTip(Some(&NSString::from_str(&indicator.tooltip)));
         }
+        // The menu (retained by the status item) keeps the panel item alive.
+        PANEL_ITEM.store(Retained::as_ptr(&panel) as usize, Ordering::Release);
+        update_status_button(&native, mtm, &indicator);
     });
-}
-
-#[cfg(target_os = "macos")]
-fn add_note(mtm: MainThreadMarker, menu: &NSMenu, text: &str) {
-    let item = NSMenuItem::new(mtm);
-    item.setTitle(&NSString::from_str(text));
-    item.setEnabled(false);
-    menu.addItem(&item);
-}
-
-#[cfg(target_os = "macos")]
-fn add_quota_row(
-    mtm: MainThreadMarker,
-    menu: &NSMenu,
-    title: &str,
-    value_text: &str,
-    reset_text: &str,
-    remaining: Option<u32>,
-) {
-    let (item, handles) = make_quota_item(mtm, title);
-    let percentage = remaining.unwrap_or(0);
-    unsafe {
-        let value = &*(handles.value as *const NSTextField);
-        let reset = &*(handles.reset as *const NSTextField);
-        let fill = &*(handles.fill as *const NSBox);
-        value.setStringValue(&NSString::from_str(value_text));
-        reset.setStringValue(&NSString::from_str(reset_text));
-        fill.setFrameSize(NSSize::new(
-            PROGRESS_WIDTH * f64::from(percentage) / 100.0,
-            8.0,
-        ));
-        fill.setFillColor(&quota_color(percentage));
-    }
-    menu.addItem(&item);
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
-}
-
-#[cfg(target_os = "macos")]
-fn format_reset(rfc3339: &str, short_window: bool) -> String {
-    DateTime::parse_from_rfc3339(rfc3339)
-        .map(|date| {
-            let local = date.with_timezone(&Local);
-            if short_window {
-                local.format("%Hh%M").to_string()
-            } else {
-                local.format("%d/%m à %Hh%M").to_string()
-            }
-        })
-        .unwrap_or_else(|_| "non communiquée".into())
 }
 
 fn remaining_percent(used: f64) -> u32 {
@@ -852,7 +1303,7 @@ fn claude_is_visible(snapshot: &claude::ClaudeSnapshot) -> bool {
     !matches!(snapshot.state, "disabled" | "not_configured")
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(not(target_os = "macos"), test))]
 fn claude_status_line(state: &str) -> Option<&'static str> {
     match state {
         "waiting_for_data" => Some("Claude : en attente de Claude Code…"),
@@ -949,45 +1400,83 @@ fn frame(x: f64, y: f64, width: f64, height: f64) -> NSRect {
 }
 
 #[cfg(target_os = "macos")]
+fn demo_payload(
+    label: &str,
+    period: &str,
+    remaining: u32,
+    reset_at: &str,
+    minutes: Option<i64>,
+) -> QuotaPayload {
+    QuotaPayload {
+        model: "codex".into(),
+        remaining,
+        limit: 100,
+        reset_at: reset_at.into(),
+        checked_at: Local::now().to_rfc3339(),
+        confidence: "demo".into(),
+        period: period.into(),
+        reset_label: None,
+        source: "demo".into(),
+        label: Some(label.into()),
+        window_minutes: minutes,
+    }
+}
+
+/// Off-screen render of the real menu panel with demonstration data, in light
+/// and dark appearances. Never shows a window (positioned at -20000).
+#[cfg(target_os = "macos")]
 pub fn quota_ui_smoke(directory: &str) {
-    use objc2_app_kit::{NSBackingStoreType, NSBitmapImageFileType, NSWindow, NSWindowStyleMask};
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+        NSBackingStoreType, NSBitmapImageFileType, NSWindow, NSWindowStyleMask,
+    };
     use objc2_foundation::NSDictionary;
     let mtm = MainThreadMarker::new().expect("main thread");
     let _app = NSApplication::sharedApplication(mtm);
     std::fs::create_dir_all(directory).unwrap();
-    let target = QuotaMenuTarget::new(mtm);
-    let cards = [
-        (
-            "Codex",
-            Some(63),
-            "Hebdomadaire : 85 % restants, reset 21/10".into(),
-        ),
-        (
-            "Claude",
-            Some(0),
-            "Hebdomadaire : 86 % restants, reset 21/10".into(),
-        ),
+    let soon = (Local::now() + chrono::Duration::minutes(95)).to_rfc3339();
+    let week = (Local::now() + chrono::Duration::days(4)).to_rfc3339();
+    let codex_rows = vec![
+        demo_payload("Limite 5 heures", "five-hour", 63, &soon, Some(300)),
+        demo_payload("Limite hebdomadaire", "weekly", 85, &week, Some(10080)),
+        demo_payload("Réserve", "reserve-weekly", 0, &week, None),
     ];
-    for count in [1, 2] {
-        let item = make_provider_columns(mtm, &cards[..count], &target);
-        let view = item.view().unwrap();
-        let bounds = view.bounds();
-        assert_eq!(bounds.size.width, if count == 2 { 440.0 } else { 280.0 });
+    // Stacked menu-bar indicator (two providers), rendered on light and dark bars.
+    for (mode, background) in [
+        ("light", NSColor::whiteColor()),
+        ("dark", NSColor::blackColor()),
+    ] {
+        let lines = [("Codex", "0%".to_string()), ("Claude", "73%".to_string())];
+        let image = stacked_status_image(mtm, &lines);
+        let size = image.size();
+        let canvas = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, size.width + 12.0, 24.0));
+        let bg = rounded_box(mtm, &background, 0.0);
+        bg.setFrame(canvas.bounds());
+        canvas.addSubview(&bg);
+        let view = objc2_app_kit::NSImageView::imageViewWithImage(&image, mtm);
+        view.setFrame(frame(6.0, 1.0, size.width, size.height));
+        view.setContentTintColor(Some(&*if mode == "dark" {
+            NSColor::whiteColor()
+        } else {
+            NSColor::blackColor()
+        }));
+        canvas.addSubview(&view);
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 mtm.alloc(),
-                frame(-20000.0, -20000.0, bounds.size.width, bounds.size.height),
+                frame(-20000.0, -20000.0, size.width + 12.0, 24.0),
                 NSWindowStyleMask::Borderless,
                 NSBackingStoreType::Buffered,
                 false,
             )
         };
-        window.setContentView(Some(&view));
-        view.layoutSubtreeIfNeeded();
-        let bitmap = view
-            .bitmapImageRepForCachingDisplayInRect(bounds)
+        unsafe { window.setReleasedWhenClosed(false) };
+        window.setContentView(Some(&canvas));
+        canvas.displayIfNeeded();
+        let bitmap = canvas
+            .bitmapImageRepForCachingDisplayInRect(canvas.bounds())
             .expect("bitmap");
-        view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+        canvas.cacheDisplayInRect_toBitmapImageRep(canvas.bounds(), &bitmap);
         let png = unsafe {
             bitmap.representationUsingType_properties(
                 NSBitmapImageFileType::PNG,
@@ -995,128 +1484,184 @@ pub fn quota_ui_smoke(directory: &str) {
             )
         }
         .unwrap();
-        let path = format!("{directory}/native-{count}-providers.png");
-        assert!(png.writeToFile_atomically(&NSString::from_str(&path), true));
-        println!(
-            "NATIVE_LAYOUT_PASS {count} providers: {}x{}",
-            bounds.size.width, bounds.size.height
-        );
+        assert!(png.writeToFile_atomically(
+            &NSString::from_str(&format!("{directory}/status-stacked-{mode}.png")),
+            true
+        ));
+        println!("NATIVE_STATUS_PASS {mode}: {}x{}", size.width, size.height);
     }
-}
-
-#[cfg(target_os = "macos")]
-fn make_provider_columns(
-    mtm: MainThreadMarker,
-    cards: &[(&str, Option<u32>, String)],
-    target: &QuotaMenuTarget,
-) -> Retained<NSMenuItem> {
-    use objc2_app_kit::NSButton;
-    let width = if cards.len() == 2 { 440.0 } else { 280.0 };
-    let column = width / cards.len() as f64;
-    let root = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, width, 116.0));
-    for (i, (name, remaining, details)) in cards.iter().enumerate() {
-        let x = i as f64 * column + 16.0;
-        let title = NSTextField::labelWithString(&NSString::from_str(name), mtm);
-        title.setFrame(frame(x, 86.0, column - 32.0, 20.0));
-        title.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
-        root.addSubview(&title);
-        let value = NSTextField::labelWithString(
-            &NSString::from_str(
-                &remaining
-                    .map(|p| format!("{p} % restants"))
-                    .unwrap_or_else(|| "Indisponible".into()),
-            ),
-            mtm,
-        );
-        value.setFrame(frame(x, 62.0, column - 32.0, 20.0));
-        root.addSubview(&value);
-        let track = NSBox::initWithFrame(mtm.alloc(), frame(x, 48.0, column - 32.0, 8.0));
-        track.setBoxType(NSBoxType::Custom);
-        track.setBorderWidth(0.0);
-        track.setCornerRadius(4.0);
-        track.setFillColor(&NSColor::quaternaryLabelColor());
-        root.addSubview(&track);
-        let percent = remaining.unwrap_or(0);
-        let fill = NSBox::initWithFrame(
-            mtm.alloc(),
-            frame(
-                x,
-                48.0,
-                (column - 32.0) * f64::from(percent.min(100)) / 100.0,
-                8.0,
-            ),
-        );
-        fill.setBoxType(NSBoxType::Custom);
-        fill.setBorderWidth(0.0);
-        fill.setCornerRadius(4.0);
-        fill.setFillColor(&quota_color(percent));
-        root.addSubview(&fill);
-        let button = unsafe {
-            NSButton::buttonWithTitle_target_action(
-                &NSString::from_str("Détails…"),
-                Some(target),
-                Some(objc2::sel!(openQuotaDashboard:)),
-                mtm,
-            )
-        };
-        button.setFrame(frame(x, 10.0, column - 32.0, 26.0));
-        button.setBordered(false);
-        button.setToolTip(Some(&NSString::from_str(details)));
-        root.addSubview(&button);
-    }
-    let item = NSMenuItem::new(mtm);
-    item.setView(Some(&root));
-    item.setEnabled(true);
-    item
-}
-
-#[cfg(target_os = "macos")]
-fn make_quota_item(
-    mtm: MainThreadMarker,
-    title_text: &str,
-) -> (Retained<NSMenuItem>, QuotaViewHandles) {
-    let container = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, 280.0, 76.0));
-
-    let title = NSTextField::labelWithString(&NSString::from_str(title_text), mtm);
-    title.setFrame(frame(16.0, 50.0, 150.0, 18.0));
-    title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
-
-    let value = NSTextField::labelWithString(&NSString::from_str("--"), mtm);
-    value.setFrame(frame(164.0, 50.0, 100.0, 18.0));
-    value.setAlignment(objc2_app_kit::NSTextAlignment::Right);
-
-    let track = NSBox::initWithFrame(mtm.alloc(), frame(16.0, 33.0, PROGRESS_WIDTH, 8.0));
-    track.setBoxType(NSBoxType::Custom);
-    track.setBorderWidth(0.0);
-    track.setCornerRadius(4.0);
-    track.setFillColor(&NSColor::quaternaryLabelColor());
-
-    let fill = NSBox::initWithFrame(mtm.alloc(), frame(16.0, 33.0, 0.0, 8.0));
-    fill.setBoxType(NSBoxType::Custom);
-    fill.setBorderWidth(0.0);
-    fill.setCornerRadius(4.0);
-    fill.setFillColor(&NSColor::systemGreenColor());
-
-    let reset = NSTextField::labelWithString(&NSString::from_str("Réinitialisation : --"), mtm);
-    reset.setFrame(frame(16.0, 9.0, PROGRESS_WIDTH, 16.0));
-    reset.setFont(Some(&NSFont::systemFontOfSize(11.0)));
-    reset.setTextColor(Some(&NSColor::secondaryLabelColor()));
-
-    container.addSubview(&title);
-    container.addSubview(&value);
-    container.addSubview(&track);
-    container.addSubview(&fill);
-    container.addSubview(&reset);
-
-    let handles = QuotaViewHandles {
-        value: Retained::as_ptr(&value) as usize,
-        reset: Retained::as_ptr(&reset) as usize,
-        fill: Retained::as_ptr(&fill) as usize,
+    let claude = PanelProvider {
+        name: "Claude",
+        badge: Some("pro".into()),
+        rows: vec![
+            PanelRow {
+                label: limit_label(Some(&soon), "Limite 5 heures"),
+                remaining: Some(12),
+                value: "12 %".into(),
+                reset: reset_phrase(&soon, true).unwrap(),
+            },
+            PanelRow {
+                label: limit_label(Some(&week), "Limite hebdomadaire"),
+                remaining: Some(86),
+                value: "86 %".into(),
+                reset: reset_phrase(&week, false).unwrap(),
+            },
+        ],
+        note: None,
     };
-    let item = NSMenuItem::new(mtm);
-    item.setView(Some(&container));
-    item.setEnabled(false);
-    (item, handles)
+    let scenarios: Vec<(&str, Vec<PanelProvider>)> = vec![
+        (
+            "two-providers",
+            vec![
+                codex_panel(&codex_rows, "ready", "", Some("plus".into())),
+                claude.clone(),
+            ],
+        ),
+        (
+            "codex-error",
+            vec![codex_panel(
+                &[],
+                "error",
+                "Codex a refusé la lecture des quotas : reconnectez votre compte.",
+                None,
+            )],
+        ),
+        (
+            "claude-waiting",
+            vec![PanelProvider {
+                rows: vec![],
+                note: Some(("Lecture via Claude Code…".into(), Tone::Warning)),
+                ..claude
+            }],
+        ),
+        ("none", vec![]),
+    ];
+    for (name, providers) in scenarios {
+        let header = panel_header(&providers, (!providers.is_empty()).then(Local::now));
+        for (mode, appearance) in [
+            ("light", unsafe { NSAppearanceNameAqua }),
+            ("dark", unsafe { NSAppearanceNameDarkAqua }),
+        ] {
+            let panel = make_panel_view(mtm, &header, &providers);
+            let bounds = panel.bounds();
+            assert_eq!(bounds.size.width, PANEL_WIDTH);
+            assert_eq!(bounds.size.height, panel_height(&providers));
+            let background = rounded_box(mtm, &NSColor::windowBackgroundColor(), 0.0);
+            background.setFrame(bounds);
+            let content = NSView::initWithFrame(mtm.alloc(), bounds);
+            content.addSubview(&background);
+            content.addSubview(&panel);
+            let window = unsafe {
+                NSWindow::initWithContentRect_styleMask_backing_defer(
+                    mtm.alloc(),
+                    frame(-20000.0, -20000.0, bounds.size.width, bounds.size.height),
+                    NSWindowStyleMask::Borderless,
+                    NSBackingStoreType::Buffered,
+                    false,
+                )
+            };
+            unsafe { window.setReleasedWhenClosed(false) };
+            window.setAppearance(NSAppearance::appearanceNamed(appearance).as_deref());
+            window.setContentView(Some(&content));
+            content.layoutSubtreeIfNeeded();
+            content.displayIfNeeded();
+            let bitmap = content
+                .bitmapImageRepForCachingDisplayInRect(bounds)
+                .expect("bitmap");
+            content.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+            let png = unsafe {
+                bitmap.representationUsingType_properties(
+                    NSBitmapImageFileType::PNG,
+                    &NSDictionary::new(),
+                )
+            }
+            .unwrap();
+            let path = format!("{directory}/menu-{name}-{mode}.png");
+            assert!(png.writeToFile_atomically(&NSString::from_str(&path), true));
+            let pdf = content.dataWithPDFInsideRect(bounds);
+            assert!(pdf.writeToFile_atomically(
+                &NSString::from_str(&format!("{directory}/menu-{name}-{mode}.pdf")),
+                true
+            ));
+            println!(
+                "NATIVE_LAYOUT_PASS {name} {mode}: {}x{}",
+                bounds.size.width, bounds.size.height
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mascot_image(mtm: MainThreadMarker) -> Option<Retained<NSImage>> {
+    let bytes = include_bytes!("../icons/mascot-menu.png");
+    let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len()) };
+    let icon = NSImage::initWithData(mtm.alloc(), &data)?;
+    icon.setSize(NSSize::new(18.0, 18.0));
+    icon.setTemplate(true);
+    Some(icon)
+}
+
+/// Two providers: mascot + two stacked lines ("Codex 0%" over "Claude 73%"),
+/// full names, right-aligned values. Template image so it follows the menu
+/// bar appearance; drawn lazily at the screen's scale.
+#[cfg(target_os = "macos")]
+fn stacked_status_image(
+    mtm: MainThreadMarker,
+    lines: &[(&'static str, String)],
+) -> Retained<NSImage> {
+    use objc2_app_kit::{
+        NSFontAttributeName, NSFontWeightMedium, NSFontWeightSemibold,
+        NSForegroundColorAttributeName, NSStringDrawing,
+    };
+    use objc2_foundation::{NSAttributedStringKey, NSDictionary};
+    let attrs = |weight| {
+        let font = NSFont::monospacedDigitSystemFontOfSize_weight(9.5, weight);
+        let color = NSColor::blackColor();
+        let keys: [&NSAttributedStringKey; 2] =
+            unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
+        let values: [&AnyObject; 2] = [&font, &color];
+        NSDictionary::from_slices(&keys, &values)
+    };
+    let (name_attrs, value_attrs) =
+        unsafe { (attrs(NSFontWeightMedium), attrs(NSFontWeightSemibold)) };
+    let texts: Vec<(Retained<NSString>, Retained<NSString>)> = lines
+        .iter()
+        .map(|(name, value)| (NSString::from_str(name), NSString::from_str(value)))
+        .collect();
+    let width_of = |text: &NSString, a: &NSDictionary<NSAttributedStringKey, AnyObject>| unsafe {
+        text.sizeWithAttributes(Some(a)).width.ceil()
+    };
+    let name_w = texts
+        .iter()
+        .map(|(n, _)| width_of(n, &name_attrs))
+        .fold(0.0, f64::max);
+    let value_w = texts
+        .iter()
+        .map(|(_, v)| width_of(v, &value_attrs))
+        .fold(0.0, f64::max);
+    let icon = mascot_image(mtm);
+    let text_x = if icon.is_some() { 21.0 } else { 0.0 };
+    let size = NSSize::new(text_x + name_w + 4.0 + value_w, 22.0);
+    let handler = block2::RcBlock::new(move |_rect: NSRect| -> objc2::runtime::Bool {
+        if let Some(icon) = &icon {
+            icon.drawInRect(frame(0.0, 2.0, 18.0, 18.0));
+        }
+        for (index, (name, value)) in texts.iter().enumerate() {
+            let y = if index == 0 { 11.0 } else { 0.5 };
+            unsafe {
+                name.drawAtPoint_withAttributes(NSPoint::new(text_x, y), Some(&name_attrs));
+                let vw = value.sizeWithAttributes(Some(&value_attrs)).width;
+                value.drawAtPoint_withAttributes(
+                    NSPoint::new(size.width - vw, y),
+                    Some(&value_attrs),
+                );
+            }
+        }
+        objc2::runtime::Bool::YES
+    });
+    let image = NSImage::imageWithSize_flipped_drawingHandler(size, false, &handler);
+    image.setTemplate(true);
+    image
 }
 
 #[cfg(target_os = "macos")]
@@ -1145,13 +1690,7 @@ fn build_native_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     let status_item =
         NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
     let button = status_item.button(mtm).expect("status item button");
-    let bytes = include_bytes!("../icons/mascot-menu.png");
-    let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len()) };
-    if let Some(icon) = NSImage::initWithData(mtm.alloc(), &data) {
-        icon.setSize(NSSize::new(18.0, 18.0));
-        icon.setTemplate(true);
-        button.setImage(Some(&icon));
-    }
+    button.setImage(mascot_image(mtm).as_deref());
     *app.state::<NativeMenuState>().0.lock().unwrap() = Some(NativeQuotaMenu {
         status_item: Retained::as_ptr(&status_item) as usize,
         status_button: Retained::as_ptr(&button) as usize,
@@ -1334,6 +1873,8 @@ pub fn run() {
             claude::install_claude_relay,
             claude::uninstall_claude_relay,
             open_usage_details,
+            open_claude_usage,
+            fit_settings_window,
             get_update_status,
             start_update_check,
             start_update_install,
@@ -1486,5 +2027,110 @@ mod tests {
         assert_eq!(quota_color_transition(50), ("orange", "green", 0.5));
         assert_eq!(quota_color_transition(60), ("orange", "green", 1.0));
         assert_eq!(quota_color_transition(80), ("green", "green", 0.0));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn payload(period: &str, remaining: u32, minutes: Option<i64>) -> QuotaPayload {
+        QuotaPayload {
+            model: "codex".into(),
+            remaining,
+            limit: 100,
+            reset_at: (Local::now() + chrono::Duration::hours(2)).to_rfc3339(),
+            checked_at: "2026-10-14T23:00:00+02:00".into(),
+            confidence: "test".into(),
+            period: period.into(),
+            reset_label: None,
+            source: "test".into(),
+            label: None,
+            window_minutes: minutes,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn panel_shows_every_codex_limit_without_a_details_window() {
+        // Codex may deliver weekly/reserve first: the panel always shows 5 h, then 7 days.
+        let rows = [
+            payload("reserve-weekly", 0, None),
+            payload("weekly", 85, Some(10080)),
+            payload("five-hour", 63, Some(300)),
+        ];
+        let panel = codex_panel(&rows, "ready", "", Some("plus".into()));
+        assert_eq!(panel.rows.len(), 3);
+        let labels: Vec<_> = panel.rows.iter().map(|r| r.label.as_str()).collect();
+        assert!(
+            labels[0].starts_with("Limite sur ") && labels[1].starts_with("Limite sur "),
+            "{labels:?}"
+        );
+        assert_eq!(labels[2], "Réserve");
+        // Unknown or past reset: the window name stays.
+        assert_eq!(
+            limit_label(Some("2000-01-01T00:00:00Z"), "Limite 5 heures"),
+            "Limite 5 heures"
+        );
+        assert_eq!(
+            limit_label(None, "Limite hebdomadaire"),
+            "Limite hebdomadaire"
+        );
+        assert_eq!(panel.rows[0].value, "63 %");
+        assert!(panel.rows[0].reset.starts_with("Réinitialisation à "));
+        assert!(panel.rows[1].reset.starts_with("Réinitialisation le "));
+        assert_eq!(panel.rows[2].value, "Épuisé");
+        assert_eq!(panel.note, None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn panel_header_surfaces_the_worst_provider_state() {
+        let ok = codex_panel(&[payload("five-hour", 50, Some(300))], "ready", "", None);
+        let failing = codex_panel(&[], "error", "Compte déconnecté", None);
+        let waiting = codex_panel(&[], "starting", "", None);
+        assert_eq!(panel_header(&[ok.clone()], None).status, "À jour");
+        assert_eq!(
+            panel_header(&[ok.clone(), waiting.clone()], None).status,
+            "Lecture…"
+        );
+        assert_eq!(
+            panel_header(&[waiting, failing.clone()], None).status,
+            "Erreur"
+        );
+        assert_eq!(
+            failing.note,
+            Some(("Compte déconnecté".into(), Tone::Error))
+        );
+        assert_eq!(panel_header(&[], None).status, "Inactif");
+        assert_eq!(
+            panel_header(&[ok], None).subtitle,
+            "En attente des premières données"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn panel_height_grows_with_rows_and_notes() {
+        let one = codex_panel(&[payload("five-hour", 50, Some(300))], "ready", "", None);
+        let two = codex_panel(
+            &[
+                payload("five-hour", 50, Some(300)),
+                payload("weekly", 80, Some(10080)),
+            ],
+            "ready",
+            "",
+            None,
+        );
+        assert_eq!(
+            panel_height(&[two.clone()]) - panel_height(&[one]),
+            PANEL_ROW_HEIGHT
+        );
+        assert!(panel_height(&[two.clone(), two]) > PANEL_HEADER_HEIGHT * 2.0);
+    }
+
+    #[test]
+    fn remaining_span_is_compact() {
+        assert_eq!(remaining_span(98 * 60), "1h38");
+        assert_eq!(remaining_span((5 * 24 + 12) * 3600), "5j 12h");
+        assert_eq!(remaining_span(7 * 24 * 3600), "7j");
+        assert_eq!(remaining_span(42 * 60 - 30), "42 min");
+        assert_eq!(remaining_span(3600), "1h00");
     }
 }

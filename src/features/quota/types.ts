@@ -54,4 +54,6 @@ export type ClaudeSnapshot = {
   errorKind: string | null;
   metrics: ClaudeMetric[];
   capability: { refresh: "event_only" | "on_demand" | "none" };
+  planType: string | null;
+  extraUsage: { enabled: boolean; limitReached: boolean } | null;
 };
