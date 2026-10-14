@@ -12,7 +12,7 @@ export type QuotaSnapshot = {
   label?: string | null;
 };
 export type CodexStatus = {
-  phase: "starting" | "missing" | "signed_out" | "ready" | "error" | "logging_in";
+  phase: "starting" | "disabled" | "missing" | "signed_out" | "ready" | "error" | "logging_in";
   message: string;
   executable: string | null;
   lastChecked: string | null;
@@ -23,4 +23,35 @@ export type CodexStatus = {
   refreshSeconds: number;
   availableResets: number | null;
   refreshSettings: { customSeconds: number | null };
+};
+
+export type IndicatorChoice = "codex" | "claude" | "both";
+export type Preferences = {
+  codexEnabled: boolean;
+  claudeEnabled: boolean;
+  indicator: IndicatorChoice;
+};
+
+export type ClaudeMetric = {
+  id: string;
+  label: string;
+  usedPercent: number | null;
+  resetAt: string | null;
+  availability: "available" | "not_reported" | "unavailable";
+  periodDurationSeconds: number;
+  exhausted: boolean;
+};
+export type ClaudeSnapshot = {
+  provider: "claude";
+  schemaVersion: number;
+  enabled: boolean;
+  configured: boolean;
+  state: "disabled" | "not_configured" | "waiting_for_data" | "ready" | "stale" | "error";
+  source: { kind: string; documentationUrl: string } | null;
+  observedAt: string | null;
+  providerFetchedAt: string | null;
+  message: string;
+  errorKind: string | null;
+  metrics: ClaudeMetric[];
+  capability: { refresh: "event_only" | "on_demand" | "none" };
 };

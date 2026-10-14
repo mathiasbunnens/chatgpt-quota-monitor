@@ -1,4 +1,4 @@
-# Quota Codex
+# Quota Monitor
 
 [![Desktop checks](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml/badge.svg)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml)
 [![Latest release](https://img.shields.io/github/v/release/mathiasbunnens/chatgpt-quota-monitor)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest)
@@ -8,9 +8,9 @@
 
 **Les quotas Codex visibles en un coup d’œil, directement depuis la barre des menus ou la zone de notification.**
 
-<img width="300" alt="Aperçu du menu macOS de Quota Codex" src="https://github.com/user-attachments/assets/5def5240-3c0b-42b2-ba33-d31215adbf63" />
+<img width="300" alt="Aperçu du menu macOS de Quota Monitor" src="https://github.com/user-attachments/assets/5def5240-3c0b-42b2-ba33-d31215adbf63" />
 
-Quota Codex est une petite application de bureau pour **macOS, Windows et Linux**. Elle se connecte localement à Codex, récupère les limites associées au compte ChatGPT et affiche le quota restant sans devoir garder une page web ouverte.
+Quota Monitor est une petite application de bureau pour **macOS, Windows et Linux**. Elle se connecte localement à Codex, récupère les limites associées au compte ChatGPT et affiche le quota restant sans devoir garder une page web ouverte.
 
 [Télécharger la dernière version](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest) · [Guide d’installation](docs/INSTALLATION.md) · [Compatibilité](docs/PLATFORMS.md) · [Signaler un problème](https://github.com/mathiasbunnens/chatgpt-quota-monitor/issues/new/choose)
 
@@ -22,15 +22,15 @@ Quota Codex est une petite application de bureau pour **macOS, Windows et Linux*
 - une barre de progression verte, orange puis rouge à mesure que le quota diminue ;
 - la réserve **Luna**, uniquement lorsqu’elle est réellement fournie par Codex et que le quota de 5 heures est épuisé.
 
-Le quota hebdomadaire reste visible dès lors qu’il est fourni par Codex. Lorsque le quota de 5 heures atteint `0 %`, cette ligne disparaît et la réserve Luna prend sa place si elle est disponible. Quota Codex n’invente jamais une limite absente de la réponse de Codex.
+Le quota hebdomadaire reste visible dès lors qu’il est fourni par Codex. Lorsque le quota de 5 heures atteint `0 %`, cette ligne disparaît et la réserve Luna prend sa place si elle est disponible. Quota Monitor n’invente jamais une limite absente de la réponse de Codex.
 
 ## Fonctionnement
 
-Quota Codex utilise directement **Codex App Server** pour consulter les quotas :
+Quota Monitor utilise directement **Codex App Server** pour consulter les quotas :
 
 1. l’application détecte une installation compatible de Codex ;
 2. Codex réutilise la connexion ChatGPT déjà présente, ou propose une connexion si nécessaire ;
-3. Quota Codex demande l’état du compte et les fenêtres de quota ;
+3. Quota Monitor demande l’état du compte et les fenêtres de quota ;
 4. les valeurs sont actualisées automatiquement en arrière-plan.
 
 Il n’y a **aucune extension navigateur**, aucun cookie copié et aucun serveur HTTP local. La page d’utilisation Codex peut être ouverte pour consulter les détails, mais elle n’a pas besoin de rester ouverte.
@@ -43,21 +43,21 @@ Télécharge le paquet correspondant à ton système depuis la [dernière releas
 
 | Système | Installation | Comportement |
 | --- | --- | --- |
-| macOS | Ouvre le `.dmg`, puis glisse **Quota Codex** dans **Applications**. | L’application reste uniquement dans la barre des menus. |
+| macOS | Ouvre le `.dmg`, puis glisse **Quota Monitor** dans **Applications**. | L’application reste uniquement dans la barre des menus. |
 | Windows | Lance le fichier `*-setup.exe`. | Le tableau de bord et l’icône de notification restent disponibles. |
 | Linux Debian/Ubuntu | Installe le `.deb` avec `sudo apt install ./nom-du-paquet.deb`. | Le tableau de bord fonctionne même sans zone de notification. |
 | Linux AppImage | Rends l’AppImage exécutable, puis lance-le. | FUSE peut être nécessaire selon la distribution. |
 
 Au premier lancement :
 
-1. vérifie que Codex est installé ; sur macOS, Quota Codex détecte aussi le binaire intégré à l’application **ChatGPT** ;
+1. vérifie que Codex est installé ; sur macOS, Quota Monitor détecte aussi le binaire intégré à l’application **ChatGPT** ;
 2. ouvre **Connexion** si aucun compte ChatGPT n’est encore associé à Codex ;
 3. termine l’autorisation dans le navigateur ;
-4. reviens dans Quota Codex : les limites apparaissent automatiquement.
+4. reviens dans Quota Monitor : les limites apparaissent automatiquement.
 
 Une clé API seule ne donne pas accès aux quotas d’un abonnement ChatGPT. La connexion doit être effectuée avec le compte ChatGPT concerné.
 
-> Le paquet macOS n’est pas signé avec un certificat Apple. Si macOS bloque le premier lancement, fais un clic droit sur **Quota Codex** dans Applications, choisis **Ouvrir**, puis confirme.
+> Le paquet macOS n’est pas signé avec un certificat Apple. Si macOS bloque le premier lancement, fais un clic droit sur **Quota Monitor** dans Applications, choisis **Ouvrir**, puis confirme.
 
 Le [guide d’installation détaillé](docs/INSTALLATION.md) couvre aussi les chemins personnalisés, le code de connexion et les problèmes fréquents.
 
@@ -65,7 +65,7 @@ Le [guide d’installation détaillé](docs/INSTALLATION.md) couvre aussi les ch
 
 ### macOS
 
-Quota Codex est une application **menu-bar only** : aucune fenêtre principale ne s’ouvre. Un clic sur l’icône affiche les quotas et déclenche immédiatement leur actualisation. L’entrée **Connexion** disparaît dès que le compte est prêt.
+Quota Monitor est une application **menu-bar only** : aucune fenêtre principale ne s’ouvre. Un clic sur l’icône affiche les quotas et déclenche immédiatement leur actualisation. L’entrée **Connexion** disparaît dès que le compte est prêt.
 
 ### Windows
 
@@ -89,14 +89,14 @@ Windows et Linux permettent aussi de choisir un intervalle fixe entre 30 seconde
 
 ## Mises à jour
 
-Quota Codex vérifie les nouvelles versions publiées sur GitHub. Lorsqu’une mise à jour est disponible, une seule popup accompagne tout le parcours :
+Quota Monitor vérifie les nouvelles versions publiées sur GitHub. Lorsqu’une mise à jour est disponible, une seule popup accompagne tout le parcours :
 
 1. recherche de la nouvelle version ;
 2. téléchargement avec progression ;
 3. installation ;
 4. bouton **Quitter et relancer**.
 
-Le bouton **Fermer** masque uniquement cette popup et laisse Quota Codex actif. Les artefacts de mise à jour sont signés et vérifiés par l’application.
+Le bouton **Fermer** masque uniquement cette popup et laisse Quota Monitor actif. Les artefacts de mise à jour sont signés et vérifiés par l’application.
 
 ## Confidentialité et sécurité
 

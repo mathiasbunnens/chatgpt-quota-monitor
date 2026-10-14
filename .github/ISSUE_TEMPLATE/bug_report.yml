@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem with Quota Codex.
+description: Report a reproducible problem with Quota Monitor.
 title: "[Bug]: "
 labels: [bug]
 body:

@@ -1,7 +1,41 @@
 mod activity;
+mod claude;
+mod claude_cli;
 mod codex;
+mod indicator;
+mod prefs;
 #[cfg(any(not(target_os = "macos"), test))]
 mod tray_percentage;
+
+/// Packaged executable smoke of the production transport, without opening UI or touching preferences.
+pub fn claude_usage_smoke(directory: &str) -> Result<(), String> {
+    let executable = claude_cli::discover().ok_or("Claude Code absent")?;
+    let payload = claude_cli::read_usage(&executable, std::path::Path::new(directory))
+        .map_err(str::to_string)?;
+    if payload["rate_limits_available"] != true {
+        return Err("Limites d’abonnement non disponibles".into());
+    }
+    let five = claude_cli::window(&payload["rate_limits"]["five_hour"]);
+    let seven = claude_cli::window(&payload["rate_limits"]["seven_day"]);
+    if five.is_none() && seven.is_none() {
+        return Err("Aucune fenêtre reçue".into());
+    }
+    println!(
+        "CLAUDE_USAGE_SMOKE_PASS {}",
+        serde_json::json!({"fiveHour":five,"sevenDay":seven})
+    );
+    Ok(())
+}
+
+/// Entry for the `--claude-statusline-relay` helper mode (no UI is started).
+pub fn claude_relay(args: &[String]) -> i32 {
+    claude::relay_main(args)
+}
+
+/// True when the process was started as the Claude Code statusLine relay.
+pub fn is_claude_relay(args: &[String]) -> bool {
+    args.iter().any(|a| a == claude::RELAY_FLAG)
+}
 
 #[cfg(target_os = "macos")]
 use chrono::{DateTime, Local};
@@ -130,7 +164,7 @@ fn show_update_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             "updater",
             tauri::WebviewUrl::App("index.html".into()),
         )
-        .title("Mise à jour de Quota Codex")
+        .title("Mise à jour de Quota Monitor")
         .inner_size(420.0, 260.0)
         .min_inner_size(360.0, 240.0)
         .resizable(false)
@@ -149,7 +183,7 @@ fn show_update_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 fn show_update_error(app: &tauri::AppHandle, mode: UpdateCheckMode, error: impl ToString) {
     let error = error.to_string();
-    eprintln!("Quota Codex update failed: {error}");
+    eprintln!("Quota Monitor update failed: {error}");
     if mode == UpdateCheckMode::Interactive {
         let _ = show_update_window(app);
         update_status(
@@ -200,7 +234,7 @@ async fn check_for_available_update(app: tauri::AppHandle, mode: UpdateCheckMode
                 &app,
                 "available",
                 format!(
-                    "La version {current_version} est installée. Quota Codex v{next_version} est disponible."
+                    "La version {current_version} est installée. Quota Monitor v{next_version} est disponible."
                 ),
                 None,
                 Some(next_version),
@@ -253,7 +287,7 @@ async fn download_and_install_update(app: tauri::AppHandle) {
     update_status(
         &app,
         "downloading",
-        format!("Téléchargement de Quota Codex v{next_version}…"),
+        format!("Téléchargement de Quota Monitor v{next_version}…"),
         Some(0),
         Some(next_version.clone()),
     );
@@ -274,7 +308,7 @@ async fn download_and_install_update(app: tauri::AppHandle) {
                     update_status(
                         &progress_app,
                         "downloading",
-                        format!("Téléchargement de Quota Codex v{progress_version}…"),
+                        format!("Téléchargement de Quota Monitor v{progress_version}…"),
                         Some(progress),
                         Some(progress_version.clone()),
                     );
@@ -287,7 +321,7 @@ async fn download_and_install_update(app: tauri::AppHandle) {
         Ok(()) => update_status(
             &app,
             "ready",
-            format!("Quota Codex v{next_version} est installé et prêt à être relancé."),
+            format!("Quota Monitor v{next_version} est installé et prêt à être relancé."),
             Some(100),
             Some(next_version),
         ),
@@ -392,6 +426,21 @@ define_class!(
             open_usage_page();
         }
 
+        #[unsafe(method(openQuotaDashboard:))]
+        fn open_quota_dashboard(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = APP_HANDLE.get().cloned() {
+                tauri::async_runtime::spawn(async move {
+                    let window = if let Some(w) = app.get_webview_window("main") { Some(w) }
+                    else { tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).title("Quota Monitor — Détails").inner_size(720.0, 580.0).build().ok() };
+                    if let Some(w) = window { let _ = w.show(); let _ = w.set_focus(); }
+                });
+            }
+        }
+        #[unsafe(method(openSettings:))]
+        fn open_settings_action(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = APP_HANDLE.get().cloned() { open_settings_async(app); }
+        }
+
         #[unsafe(method(checkForUpdates:))]
         fn check_for_updates(&self, _sender: Option<&AnyObject>) {
             if let Some(app) = APP_HANDLE.get().cloned() {
@@ -419,6 +468,9 @@ fn get_platform() -> String {
 
 #[tauri::command]
 fn get_quota_snapshots(app: tauri::AppHandle) -> Vec<QuotaPayload> {
+    if !prefs::current(&app).codex_enabled {
+        return Vec::new();
+    }
     let rows = app
         .state::<QuotaState>()
         .0
@@ -497,9 +549,53 @@ fn quota_order(
 
 #[tauri::command]
 fn request_quota_refresh(app: tauri::AppHandle) {
+    crate::claude::request_claude_refresh(app.clone());
+    if !prefs::current(&app).codex_enabled {
+        return;
+    }
     if let Some(provider) = app.try_state::<codex::Provider>() {
         provider.refresh();
     }
+}
+
+fn show_settings_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let window = if let Some(window) = app.get_webview_window("settings") {
+        window
+    } else {
+        tauri::WebviewWindowBuilder::new(
+            app,
+            "settings",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("Réglages de Quota Monitor")
+        .inner_size(600.0, 560.0)
+        .min_inner_size(520.0, 420.0)
+        .center()
+        .build()?
+    };
+    window.show()?;
+    window.unminimize()?;
+    window.set_focus()?;
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(|| {
+        let mtm = MainThreadMarker::new().expect("settings activation runs on main thread");
+        NSApplication::sharedApplication(mtm).activate();
+    });
+    Ok(())
+}
+
+/// Window creation must not run on the main thread inside a menu callback.
+fn open_settings_async(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = show_settings_window(&app) {
+            eprintln!("Quota Monitor settings unavailable: {error}");
+        }
+    });
+}
+
+#[tauri::command]
+async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    show_settings_window(&app).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -578,50 +674,79 @@ fn render_native_menu(app: &tauri::AppHandle) {
             return;
         };
         let snapshots = get_quota_snapshots(app.clone());
+        let prefs = prefs::current(&app);
+        let claude_snap = claude::snapshot(&app);
+        let claude_visible = claude_is_visible(&claude_snap);
         let mtm = MainThreadMarker::new().expect("native menu on main thread");
         let menu = NSMenu::new(mtm);
         menu.setAutoenablesItems(false);
         let target = unsafe { &*(native.target as *const QuotaMenuTarget) };
         menu.setDelegate(Some(ProtocolObject::from_ref(target)));
-        if snapshots.is_empty() {
-            let item = NSMenuItem::new(mtm);
-            item.setTitle(&NSString::from_str("Quotas indisponibles"));
-            item.setEnabled(false);
-            menu.addItem(&item);
+        let mut cards = Vec::new();
+        if prefs.codex_enabled {
+            let short = short_codex_quota(&snapshots);
+            let details = snapshots
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{} : {} % restants — reset {}",
+                        quota_label(p),
+                        p.remaining,
+                        reset_label(p)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            cards.push(("Codex", short.map(|p| p.remaining), details));
         }
-        for payload in &snapshots {
-            let title = quota_label(payload);
-            let (item, handles) = make_quota_item(mtm, &title);
-            let percentage = payload.remaining.min(100);
-            unsafe {
-                let value = &*(handles.value as *const NSTextField);
-                let reset = &*(handles.reset as *const NSTextField);
-                let fill = &*(handles.fill as *const NSBox);
-                value.setStringValue(&NSString::from_str(&format!("{percentage} % restants")));
-                reset.setStringValue(&NSString::from_str(&format!(
-                    "Réinitialisation : {}",
-                    reset_label(payload)
-                )));
-                fill.setFrameSize(NSSize::new(
-                    PROGRESS_WIDTH * f64::from(percentage) / 100.0,
-                    8.0,
-                ));
-                let color = quota_color(percentage);
-                fill.setFillColor(&color);
+        if claude_visible {
+            let short = claude_snap
+                .metrics
+                .iter()
+                .find(|m| m.id == "claude:five_hour" && m.availability == "available");
+            let mut details = claude_snap
+                .metrics
+                .iter()
+                .map(|m| {
+                    format!(
+                        "{} : {} — reset {}",
+                        m.label,
+                        m.used_percent
+                            .map(|u| format!("{} % restants", remaining_percent(u)))
+                            .unwrap_or_else(|| "Non communiqué".into()),
+                        m.reset_at
+                            .as_deref()
+                            .map(|at| format_reset(at, m.period_duration_seconds <= 18000))
+                            .unwrap_or_else(|| "non communiqué".into())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !claude_snap.message.is_empty() {
+                details.push_str(&format!("\n{}", claude_snap.message));
             }
-            menu.addItem(&item);
-            menu.addItem(&NSMenuItem::separatorItem(mtm));
+            let shown = if claude_snap.state == "error" {
+                None
+            } else {
+                short.and_then(|m| m.used_percent).map(remaining_percent)
+            };
+            cards.push(("Claude", shown, details));
+        }
+        if cards.is_empty() {
+            add_note(mtm, &menu, "Aucun fournisseur actif");
+        } else {
+            menu.addItem(&make_provider_columns(mtm, &cards, target));
         }
         let connection_phase = app
             .try_state::<codex::Provider>()
             .map(|provider| provider.status().phase)
             .unwrap_or_else(|| "starting".into());
-        if connection_phase != "ready" {
+        if prefs.codex_enabled && connection_phase != "ready" {
             let connection = NSMenuItem::new(mtm);
             connection.setTitle(&NSString::from_str(if connection_phase == "logging_in" {
                 "Connexion en cours…"
             } else {
-                "Connexion…"
+                "Connexion à Codex…"
             }));
             connection.setEnabled(connection_phase != "logging_in");
             unsafe {
@@ -630,12 +755,18 @@ fn render_native_menu(app: &tauri::AppHandle) {
             }
             menu.addItem(&connection);
         }
-        for (title, action) in [
-            ("Voir les détails sur Codex…", objc2::sel!(openUsage:)),
-            ("Vérifier les mises à jour…", objc2::sel!(checkForUpdates:)),
+        for (title, action, key) in [
+            ("Réglages…", objc2::sel!(openSettings:), ","),
+            ("Voir les détails sur Codex…", objc2::sel!(openUsage:), ""),
+            (
+                "Vérifier les mises à jour…",
+                objc2::sel!(checkForUpdates:),
+                "",
+            ),
         ] {
             let item = NSMenuItem::new(mtm);
             item.setTitle(&NSString::from_str(title));
+            item.setKeyEquivalent(&NSString::from_str(key));
             unsafe {
                 item.setTarget(Some(target));
                 item.setAction(Some(action));
@@ -653,29 +784,135 @@ fn render_native_menu(app: &tauri::AppHandle) {
             mtm,
             &app.package_info().version.to_string(),
         ));
+        let indicator = indicator_for(&app, &snapshots, &claude_snap);
         unsafe {
             let item = &*(native.status_item as *const objc2_app_kit::NSStatusItem);
             item.setMenu(Some(&menu));
             let button = &*(native.status_button as *const objc2_app_kit::NSStatusBarButton);
-            let title = snapshots
-                .first()
-                .map(|p| format!("{}%", p.remaining.min(100)))
-                .unwrap_or_else(|| "--".into());
-            button.setTitle(&NSString::from_str(&title));
-            button.setToolTip(Some(&NSString::from_str(
-                &snapshots
-                    .first()
-                    .map(quota_label)
-                    .unwrap_or_else(|| "Quota Codex".into()),
-            )));
+            button.setTitle(&NSString::from_str(&indicator.title));
+            button.setToolTip(Some(&NSString::from_str(&indicator.tooltip)));
         }
     });
 }
 
-#[cfg(not(target_os = "macos"))]
-fn open_refresh_settings(app: &tauri::AppHandle) {
-    show_dashboard(app);
-    let _ = app.emit("open-refresh-settings", ());
+#[cfg(target_os = "macos")]
+fn add_note(mtm: MainThreadMarker, menu: &NSMenu, text: &str) {
+    let item = NSMenuItem::new(mtm);
+    item.setTitle(&NSString::from_str(text));
+    item.setEnabled(false);
+    menu.addItem(&item);
+}
+
+#[cfg(target_os = "macos")]
+fn add_quota_row(
+    mtm: MainThreadMarker,
+    menu: &NSMenu,
+    title: &str,
+    value_text: &str,
+    reset_text: &str,
+    remaining: Option<u32>,
+) {
+    let (item, handles) = make_quota_item(mtm, title);
+    let percentage = remaining.unwrap_or(0);
+    unsafe {
+        let value = &*(handles.value as *const NSTextField);
+        let reset = &*(handles.reset as *const NSTextField);
+        let fill = &*(handles.fill as *const NSBox);
+        value.setStringValue(&NSString::from_str(value_text));
+        reset.setStringValue(&NSString::from_str(reset_text));
+        fill.setFrameSize(NSSize::new(
+            PROGRESS_WIDTH * f64::from(percentage) / 100.0,
+            8.0,
+        ));
+        fill.setFillColor(&quota_color(percentage));
+    }
+    menu.addItem(&item);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+}
+
+#[cfg(target_os = "macos")]
+fn format_reset(rfc3339: &str, short_window: bool) -> String {
+    DateTime::parse_from_rfc3339(rfc3339)
+        .map(|date| {
+            let local = date.with_timezone(&Local);
+            if short_window {
+                local.format("%Hh%M").to_string()
+            } else {
+                local.format("%d/%m à %Hh%M").to_string()
+            }
+        })
+        .unwrap_or_else(|_| "non communiquée".into())
+}
+
+fn remaining_percent(used: f64) -> u32 {
+    (100.0 - used).clamp(0.0, 100.0).round() as u32
+}
+
+fn claude_is_visible(snapshot: &claude::ClaudeSnapshot) -> bool {
+    !matches!(snapshot.state, "disabled" | "not_configured")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn claude_status_line(state: &str) -> Option<&'static str> {
+    match state {
+        "waiting_for_data" => Some("Claude : en attente de Claude Code…"),
+        "stale" => Some("Claude : données anciennes"),
+        "error" | "unavailable" | "auth_required" => Some("Claude : erreur de lecture"),
+        _ => None,
+    }
+}
+
+fn short_codex_quota(rows: &[QuotaPayload]) -> Option<&QuotaPayload> {
+    rows.iter().find(|row| {
+        !is_reserve(row) && (row.window_minutes == Some(300) || row.period == "five-hour")
+    })
+}
+
+fn codex_display(app: &tauri::AppHandle, rows: &[QuotaPayload]) -> Option<indicator::Display> {
+    if !prefs::current(app).codex_enabled {
+        return None;
+    }
+    if let Some(first) = short_codex_quota(rows) {
+        return Some(indicator::Display::Percent(first.remaining.min(100)));
+    }
+    let failed = app
+        .try_state::<codex::Provider>()
+        .is_some_and(|p| p.status().phase == "error");
+    Some(if failed {
+        indicator::Display::Error
+    } else {
+        indicator::Display::Pending
+    })
+}
+
+fn claude_display(snapshot: &claude::ClaudeSnapshot) -> Option<indicator::Display> {
+    if !claude_is_visible(snapshot) {
+        return None;
+    }
+    if matches!(snapshot.state, "error" | "unavailable" | "auth_required") {
+        return Some(indicator::Display::Error);
+    }
+    let short = snapshot
+        .metrics
+        .first()
+        .filter(|m| m.availability == "available")
+        .and_then(|m| m.used_percent);
+    Some(match short {
+        Some(used) => indicator::Display::Percent(remaining_percent(used)),
+        None => indicator::Display::Pending,
+    })
+}
+
+fn indicator_for(
+    app: &tauri::AppHandle,
+    rows: &[QuotaPayload],
+    claude_snap: &claude::ClaudeSnapshot,
+) -> indicator::Indicator {
+    indicator::compute(
+        &prefs::current(app).indicator,
+        codex_display(app, rows),
+        claude_display(claude_snap),
+    )
 }
 
 fn quota_label(payload: &QuotaPayload) -> String {
@@ -697,29 +934,140 @@ fn quota_label(payload: &QuotaPayload) -> String {
 fn render_native_menu(app: &tauri::AppHandle) {
     if let Some(tray) = app.tray_by_id("quota") {
         let snapshots = get_quota_snapshots(app.clone());
-        let text = snapshots
-            .first()
-            .map(|p| {
-                format!(
-                    "Quota Codex · {} · {} % restants",
-                    quota_label(p),
-                    p.remaining.min(100)
-                )
-            })
-            .unwrap_or_else(|| "Quota Codex · Quotas indisponibles".into());
-        let _ = tray.set_tooltip(Some(text));
+        let indicator = indicator_for(app, &snapshots, &claude::snapshot(app));
+        let _ = tray.set_tooltip(Some(indicator.tooltip));
         if let Ok(menu) = desktop_menu(app) {
             let _ = tray.set_menu(Some(menu));
         }
-        let _ = tray.set_icon(Some(tray_percentage::icon(
-            snapshots.first().map(|p| p.remaining.min(100)),
-        )));
+        let _ = tray.set_icon(Some(tray_percentage::icon(indicator.icon_value)));
     }
 }
 
 #[cfg(target_os = "macos")]
 fn frame(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+
+#[cfg(target_os = "macos")]
+pub fn quota_ui_smoke(directory: &str) {
+    use objc2_app_kit::{NSBackingStoreType, NSBitmapImageFileType, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::NSDictionary;
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let _app = NSApplication::sharedApplication(mtm);
+    std::fs::create_dir_all(directory).unwrap();
+    let target = QuotaMenuTarget::new(mtm);
+    let cards = [
+        (
+            "Codex",
+            Some(63),
+            "Hebdomadaire : 85 % restants, reset 21/10".into(),
+        ),
+        (
+            "Claude",
+            Some(0),
+            "Hebdomadaire : 86 % restants, reset 21/10".into(),
+        ),
+    ];
+    for count in [1, 2] {
+        let item = make_provider_columns(mtm, &cards[..count], &target);
+        let view = item.view().unwrap();
+        let bounds = view.bounds();
+        assert_eq!(bounds.size.width, if count == 2 { 440.0 } else { 280.0 });
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                mtm.alloc(),
+                frame(-20000.0, -20000.0, bounds.size.width, bounds.size.height),
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        window.setContentView(Some(&view));
+        view.layoutSubtreeIfNeeded();
+        let bitmap = view
+            .bitmapImageRepForCachingDisplayInRect(bounds)
+            .expect("bitmap");
+        view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+        let png = unsafe {
+            bitmap.representationUsingType_properties(
+                NSBitmapImageFileType::PNG,
+                &NSDictionary::new(),
+            )
+        }
+        .unwrap();
+        let path = format!("{directory}/native-{count}-providers.png");
+        assert!(png.writeToFile_atomically(&NSString::from_str(&path), true));
+        println!(
+            "NATIVE_LAYOUT_PASS {count} providers: {}x{}",
+            bounds.size.width, bounds.size.height
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn make_provider_columns(
+    mtm: MainThreadMarker,
+    cards: &[(&str, Option<u32>, String)],
+    target: &QuotaMenuTarget,
+) -> Retained<NSMenuItem> {
+    use objc2_app_kit::NSButton;
+    let width = if cards.len() == 2 { 440.0 } else { 280.0 };
+    let column = width / cards.len() as f64;
+    let root = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, width, 116.0));
+    for (i, (name, remaining, details)) in cards.iter().enumerate() {
+        let x = i as f64 * column + 16.0;
+        let title = NSTextField::labelWithString(&NSString::from_str(name), mtm);
+        title.setFrame(frame(x, 86.0, column - 32.0, 20.0));
+        title.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
+        root.addSubview(&title);
+        let value = NSTextField::labelWithString(
+            &NSString::from_str(
+                &remaining
+                    .map(|p| format!("{p} % restants"))
+                    .unwrap_or_else(|| "Indisponible".into()),
+            ),
+            mtm,
+        );
+        value.setFrame(frame(x, 62.0, column - 32.0, 20.0));
+        root.addSubview(&value);
+        let track = NSBox::initWithFrame(mtm.alloc(), frame(x, 48.0, column - 32.0, 8.0));
+        track.setBoxType(NSBoxType::Custom);
+        track.setBorderWidth(0.0);
+        track.setCornerRadius(4.0);
+        track.setFillColor(&NSColor::quaternaryLabelColor());
+        root.addSubview(&track);
+        let percent = remaining.unwrap_or(0);
+        let fill = NSBox::initWithFrame(
+            mtm.alloc(),
+            frame(
+                x,
+                48.0,
+                (column - 32.0) * f64::from(percent.min(100)) / 100.0,
+                8.0,
+            ),
+        );
+        fill.setBoxType(NSBoxType::Custom);
+        fill.setBorderWidth(0.0);
+        fill.setCornerRadius(4.0);
+        fill.setFillColor(&quota_color(percent));
+        root.addSubview(&fill);
+        let button = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &NSString::from_str("Détails…"),
+                Some(target),
+                Some(objc2::sel!(openQuotaDashboard:)),
+                mtm,
+            )
+        };
+        button.setFrame(frame(x, 10.0, column - 32.0, 26.0));
+        button.setBordered(false);
+        button.setToolTip(Some(&NSString::from_str(details)));
+        root.addSubview(&button);
+    }
+    let item = NSMenuItem::new(mtm);
+    item.setView(Some(&root));
+    item.setEnabled(true);
+    item
 }
 
 #[cfg(target_os = "macos")]
@@ -774,8 +1122,10 @@ fn make_quota_item(
 #[cfg(target_os = "macos")]
 fn make_version_item(mtm: MainThreadMarker, version: &str) -> Retained<NSMenuItem> {
     let container = NSView::initWithFrame(mtm.alloc(), frame(0.0, 0.0, 280.0, 24.0));
-    let label =
-        NSTextField::labelWithString(&NSString::from_str(&format!("Quota Codex v{version}")), mtm);
+    let label = NSTextField::labelWithString(
+        &NSString::from_str(&format!("Quota Monitor v{version}")),
+        mtm,
+    );
     label.setFrame(frame(16.0, 5.0, 248.0, 14.0));
     label.setFont(Some(&NSFont::systemFontOfSize(10.0)));
     label.setTextColor(Some(&NSColor::tertiaryLabelColor()));
@@ -829,10 +1179,20 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     let menu = Menu::new(app)?;
     let rows = get_quota_snapshots(app.clone());
-    if rows.is_empty() {
+    let prefs = prefs::current(app);
+    let claude_snap = claude::snapshot(app);
+    if !prefs.codex_enabled && !claude_is_visible(&claude_snap) {
         menu.append(&MenuItem::new(
             app,
-            "Quotas indisponibles",
+            "Aucun fournisseur actif",
+            false,
+            None::<&str>,
+        )?)?;
+    }
+    if prefs.codex_enabled && rows.is_empty() {
+        menu.append(&MenuItem::new(
+            app,
+            "Codex · Quotas indisponibles",
             false,
             None::<&str>,
         )?)?;
@@ -841,7 +1201,7 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
         menu.append(&MenuItem::new(
             app,
             format!(
-                "{} · {} % restants",
+                "Codex · {} · {} % restants",
                 quota_label(&row),
                 row.remaining.min(100)
             ),
@@ -849,11 +1209,30 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
             None::<&str>,
         )?)?;
     }
+    if claude_is_visible(&claude_snap) {
+        for m in &claude_snap.metrics {
+            let text = match (m.availability, m.used_percent) {
+                ("available", Some(_)) if m.exhausted => "épuisé".to_string(),
+                ("available", Some(u)) => format!("{} % restants", remaining_percent(u)),
+                ("unavailable", _) => "réinitialisée · en attente".to_string(),
+                _ => "non communiquée".to_string(),
+            };
+            menu.append(&MenuItem::new(
+                app,
+                format!("Claude · {} · {text}", m.label),
+                false,
+                None::<&str>,
+            )?)?;
+        }
+        if let Some(line) = claude_status_line(claude_snap.state) {
+            menu.append(&MenuItem::new(app, line, false, None::<&str>)?)?;
+        }
+    }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     for (id, title) in [
         ("show", "Afficher les quotas"),
         ("refresh", "Actualiser les quotas"),
-        ("settings", "Réglages d’actualisation…"),
+        ("settings", "Réglages…"),
         ("usage", "Voir les détails sur Codex…"),
         ("update", "Vérifier les mises à jour…"),
         ("quit", "Quitter"),
@@ -862,7 +1241,7 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
     }
     menu.append(&MenuItem::new(
         app,
-        format!("Quota Codex v{}", app.package_info().version),
+        format!("Quota Monitor v{}", app.package_info().version),
         false,
         None::<&str>,
     )?)?;
@@ -879,11 +1258,11 @@ fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = desktop_menu(app.handle())?;
     let tray = TrayIconBuilder::with_id("quota")
         .icon(tray_percentage::icon(None))
-        .tooltip("Quota Codex · En attente des quotas")
+        .tooltip("Quota Monitor · En attente des quotas")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_dashboard(app),
-            "settings" => open_refresh_settings(app),
+            "settings" => open_settings_async(app.clone()),
             "refresh" => {
                 request_quota_refresh(app.clone());
             }
@@ -912,7 +1291,7 @@ fn build_desktop(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     let tray = tray.show_menu_on_left_click(false);
     if let Err(error) = tray.build(app) {
-        eprintln!("Quota Codex tray unavailable: {error}");
+        eprintln!("Quota Monitor tray unavailable: {error}");
         // A hidden startup must remain recoverable if tray creation fails.
         let _ = window.show();
     } else {
@@ -942,10 +1321,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(QuotaState::default())
         .manage(UpdateState::default())
+        .manage(prefs::PrefsState::default())
         .invoke_handler(tauri::generate_handler![
             get_platform,
             get_quota_snapshots,
             request_quota_refresh,
+            open_settings,
+            prefs::get_preferences,
+            prefs::set_preferences,
+            claude::get_claude_snapshot,
+            claude::request_claude_refresh,
+            claude::install_claude_relay,
+            claude::uninstall_claude_relay,
             open_usage_details,
             get_update_status,
             start_update_check,
@@ -962,6 +1349,7 @@ pub fn run() {
             codex::open_codex_login
         ])
         .setup(|app| {
+            *app.state::<prefs::PrefsState>().0.lock().unwrap() = prefs::load(app.handle());
             #[cfg(target_os = "macos")]
             let _ = APP_HANDLE.set(app.handle().clone());
 
@@ -977,7 +1365,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("Quota Codex")
+            .title("Quota Monitor")
             .inner_size(500.0, 620.0)
             .min_inner_size(360.0, 420.0)
             .visible(
@@ -999,11 +1387,19 @@ pub fn run() {
             build_desktop(app)?;
 
             app.manage(codex::start(app.handle().clone()));
+            claude::start_watcher(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // Closing the Settings/updater window must not quit the menu-bar app.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
             if let tauri::RunEvent::Exit = event {
                 if let Some(provider) = app.try_state::<codex::Provider>() {
                     provider.stop();
@@ -1015,6 +1411,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indicator_uses_short_window_even_when_reserve_is_first() {
+        let rows = codex::normalize(&serde_json::json!({"rateLimitsByLimitId": {
+            "codex": {"primary":{"usedPercent":100,"windowDurationMins":300},"secondary":{"usedPercent":10,"windowDurationMins":10080}},
+            "base_model_inference":{"primary":{"usedPercent":30,"windowDurationMins":10080}}
+        }})).unwrap();
+        let rows = visible_quotas(rows, Some("plus"));
+        assert!(is_reserve(&rows[0]));
+        assert_eq!(short_codex_quota(&rows).map(|r| r.remaining), Some(0));
+    }
+
+    #[test]
+    fn weekly_only_does_not_impersonate_short_quota() {
+        let rows = codex::normalize(&serde_json::json!({"rateLimits": {
+            "primary":{"usedPercent":12,"windowDurationMins":10080}
+        }}))
+        .unwrap();
+        assert!(short_codex_quota(&rows).is_none());
+    }
 
     #[test]
     fn plus_switches_from_five_hour_to_reserve() {

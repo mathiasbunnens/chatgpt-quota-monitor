@@ -11,8 +11,8 @@ LangString QuotaStartupTitle 1033 "Start with Windows"
 LangString QuotaStartupTitle 1036 "Démarrage avec Windows"
 LangString QuotaStartupDescription 1033 "Keep your Codex quota available after signing in."
 LangString QuotaStartupDescription 1036 "Retrouvez votre quota Codex après chaque connexion."
-LangString QuotaStartupLabel 1033 "Launch Quota Codex when I sign in (recommended)"
-LangString QuotaStartupLabel 1036 "Lancer Quota Codex à l'ouverture de session (recommandé)"
+LangString QuotaStartupLabel 1033 "Launch Quota Monitor when I sign in (recommended)"
+LangString QuotaStartupLabel 1036 "Lancer Quota Monitor à l'ouverture de session (recommandé)"
 LangString QuotaStartupHint 1033 "The app starts in the system tray, without opening its window or a terminal. You can disable it later in Windows Settings > Apps > Startup."
 LangString QuotaStartupHint 1036 "L'application démarre dans la zone de notification, sans fenêtre ni terminal. Vous pouvez la désactiver dans les Paramètres Windows > Applications > Démarrage."
 
@@ -27,7 +27,11 @@ Function QuotaStartupLoad
   StrCpy $QuotaStartupLoaded 1
   StrCpy $QuotaStartupEnabled 1
   ClearErrors
-  ReadRegDWORD $0 HKCU "Software\mathiasbunnens\Quota Codex" "StartupEnabled"
+  ReadRegDWORD $0 HKCU "Software\mathiasbunnens\Quota Monitor" "StartupEnabled"
+  ${If} ${Errors}
+    ClearErrors
+    ReadRegDWORD $0 HKCU "Software\mathiasbunnens\Quota Codex" "StartupEnabled"
+  ${EndIf}
   ${IfNot} ${Errors}
     ${If} $0 == 0
       StrCpy $QuotaStartupEnabled 0

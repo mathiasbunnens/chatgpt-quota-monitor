@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from "./types";
+import type { ClaudeSnapshot, QuotaSnapshot } from "./types";
 
 export function quotaPercentage(snapshot: QuotaSnapshot) {
   if (snapshot.limit <= 0) return 0;
@@ -23,4 +23,49 @@ export function quotaLabel(snapshot: QuotaSnapshot) {
     weekly: "Limite hebdomadaire",
     "reserve-weekly": "Réserve Luna",
   } as Record<string, string>)[snapshot.period] || snapshot.period;
+}
+
+export type QuotaRow = {
+  id: string;
+  label: string;
+  /** Remaining percentage, or null when the provider did not report it. */
+  remaining: number | null;
+  exhausted: boolean;
+  /** Human text shown instead of a percentage when remaining is null. */
+  missing: string;
+  resetText: string;
+};
+
+export function codexRows(snapshots: QuotaSnapshot[]): QuotaRow[] {
+  return snapshots.map((snapshot) => {
+    const remaining = Math.round(quotaPercentage(snapshot));
+    return {
+      id: snapshot.period, label: quotaLabel(snapshot), remaining, exhausted: remaining <= 0,
+      missing: "", resetText: formatResetDate(snapshot.resetAt),
+    };
+  });
+}
+
+export function claudeRows(snapshot: ClaudeSnapshot): QuotaRow[] {
+  return snapshot.metrics.map((metric) => {
+    const available = metric.availability === "available" && metric.usedPercent !== null;
+    return {
+      id: metric.id, label: metric.label,
+      remaining: available ? Math.round(Math.max(0, Math.min(100, 100 - (metric.usedPercent as number)))) : null,
+      exhausted: available && metric.exhausted,
+      missing: metric.availability === "unavailable" ? "Réinitialisée · en attente" : "Non communiquée",
+      resetText: metric.resetAt ? formatResetDate(metric.resetAt) : "non communiquée",
+    };
+  });
+}
+
+export function claudeStatusText(snapshot: ClaudeSnapshot): string | null {
+  switch (snapshot.state) {
+    case "waiting_for_data": return "En attente de Claude Code : les limites apparaissent après la première réponse d’une session.";
+    case "stale": return snapshot.observedAt
+      ? "Dernière observation : " + new Date(snapshot.observedAt).toLocaleTimeString("fr-FR") + ". Claude Code n’a rien envoyé récemment."
+      : "Données anciennes.";
+    case "error": return snapshot.message || "Les données de Claude Code sont illisibles.";
+    default: return null;
+  }
 }

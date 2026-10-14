@@ -115,6 +115,8 @@ pub fn set_refresh_settings(
 struct Shared {
     status: Mutex<Status>,
     stop: AtomicBool,
+    /// Provider disabled in Settings: no session, no polling, no publishing.
+    paused: AtomicBool,
     child: Mutex<Option<Child>>,
 }
 impl Shared {
@@ -188,6 +190,17 @@ impl Provider {
     #[cfg(target_os = "macos")]
     pub fn login(&self, device: bool) {
         let _ = self.tx.send(Action::Login(device));
+    }
+    /// Disabling stops polling and drops the session; late results are discarded.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.shared.paused.store(!enabled, Ordering::Release);
+        if enabled {
+            self.shared.status("starting", "Connexion à Codex…");
+        } else {
+            self.shared
+                .status("disabled", "Codex est désactivé dans les Réglages.");
+        }
+        let _ = self.tx.send(Action::Refresh);
     }
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::Release);
@@ -483,6 +496,10 @@ pub fn start(app: tauri::AppHandle) -> Provider {
             status.refresh_settings = settings;
         }
     }
+    if !crate::prefs::current(&app).codex_enabled {
+        shared.paused.store(true, Ordering::Release);
+        shared.status("disabled", "Codex est désactivé dans les Réglages.");
+    }
     let (tx, rx) = mpsc::channel();
     let worker_shared = shared.clone();
     std::thread::spawn(move || worker(app, worker_shared, rx));
@@ -522,6 +539,15 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
             // Read and publish in this iteration, before acknowledging the reset.
             // Activity changes must not defer this read to the adaptive interval.
             pending_reset = Some((reply, result));
+        }
+        if shared.paused.load(Ordering::Acquire) {
+            if session.is_some() || login.is_some() {
+                session = None; // Drop stops the app-server child.
+                login = None;
+                set_codex_snapshots(&app, None);
+            }
+            next_poll = Instant::now();
+            continue;
         }
         if Instant::now() >= next_activity {
             let count = detector.count();
@@ -683,6 +709,11 @@ fn worker(app: tauri::AppHandle, shared: Arc<Shared>, rx: Receiver<Action>) {
                     _ => Ok(None),
                 }
             });
+        if shared.paused.load(Ordering::Acquire) {
+            // Disabled while the read was in flight: never publish or re-enable.
+            session = None;
+            continue;
+        }
         let quotas_refreshed = matches!(&result, Ok(Some(_)));
         match result {
             Ok(Some(snapshots)) => {
