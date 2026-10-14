@@ -8,7 +8,7 @@ Une petite application de bureau pour macOS, Windows et Linux qui lit localement
 
 | menu | réglages |
 | :---: | :---: |
-| <img width="300" alt="Menu de Quota Monitor : cartes Codex et Claude" src="docs/images/menu-macos.png" /> | <img width="400" alt="Réglages de Quota Monitor : fournisseurs Codex et Claude" src="docs/images/settings-macos.png" /> |
+| <img width="400"  alt="Menu de Quota Monitor : cartes Codex et Claude" src="https://github.com/user-attachments/assets/fa1e26c0-3dc2-43d8-a097-c3f6a287d056" /> | <img width="400"  alt="Réglages de Quota Monitor : fournisseurs Codex et Claude" src="https://github.com/user-attachments/assets/c0fc93ef-49d1-42a3-bc49-21da7f74bab7" /> |
 
 *Captures des vraies vues de l’application, avec des données de démonstration.*
 
