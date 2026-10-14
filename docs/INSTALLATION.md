@@ -25,7 +25,7 @@ Codex CLI doit être installé séparément. Une installation compatible déjà 
 
 **Se connecter avec ChatGPT** ouvre l’autorisation dans le navigateur. **Connexion par code** permet de la terminer sur un autre appareil si cette méthode est activée dans les paramètres du compte ou de l’espace de travail. Après connexion, le navigateur peut être fermé. Codex conserve la session.
 
-**Voir les détails sur Codex** ouvre la page d’utilisation à tout moment. Pour comparer les chiffres, utilise le même compte dans le navigateur et dans Codex.
+Dans **Réglages → Fournisseurs**, **Usage détaillé sur chatgpt.com ↗** ouvre la page d’utilisation à tout moment (et **Usage détaillé sur claude.ai ↗** pour Claude). Pour comparer les chiffres, utilise le même compte dans le navigateur et dans Codex.
 
 Les quotas sont actualisés selon le plan et les instances Codex détectées. Le panneau Réglages permet de choisir le mode dynamique ou une fréquence fixe. Une erreur retire les anciennes données ; aucun secours navigateur ne collecte de quotas.
 

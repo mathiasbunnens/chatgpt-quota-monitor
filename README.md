@@ -1,129 +1,98 @@
 # Quota Monitor
 
-[![Desktop checks](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml/badge.svg)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/actions/workflows/check.yml)
-[![Latest release](https://img.shields.io/github/v/release/mathiasbunnens/chatgpt-quota-monitor)](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest)
+[![Desktop checks](https://github.com/mathiasbunnens/quota-monitor/actions/workflows/check.yml/badge.svg)](https://github.com/mathiasbunnens/quota-monitor/actions/workflows/check.yml)
+[![Latest release](https://img.shields.io/github/v/release/mathiasbunnens/quota-monitor)](https://github.com/mathiasbunnens/quota-monitor/releases/latest)
 [![Platforms](https://img.shields.io/badge/plateformes-macOS%20%7C%20Windows%20%7C%20Linux-555)](docs/PLATFORMS.md)
 [![Built with Tauri 2](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)](src-tauri/Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
-**Les quotas Codex visibles en un coup d’œil, directement depuis la barre des menus ou la zone de notification.**
+**Les quotas Codex et Claude en un coup d’œil, depuis la barre des menus.**
 
-<img width="300" alt="Aperçu du menu macOS de Quota Monitor" src="https://github.com/user-attachments/assets/5def5240-3c0b-42b2-ba33-d31215adbf63" />
+<p>
+  <img width="320" alt="Menu de Quota Monitor sur macOS : cartes Codex et Claude" src="docs/images/menu-macos.png" />
+  <img width="420" alt="Réglages de Quota Monitor : fournisseurs Codex et Claude" src="docs/images/settings-macos.png" />
+</p>
 
-Quota Monitor est une petite application de bureau pour **macOS, Windows et Linux**. Elle se connecte localement à Codex, récupère les limites associées au compte ChatGPT et affiche le quota restant sans devoir garder une page web ouverte.
+<sub>Captures réalisées avec des données de démonstration.</sub>
 
-[Télécharger la dernière version](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest) · [Guide d’installation](docs/INSTALLATION.md) · [Compatibilité](docs/PLATFORMS.md) · [Signaler un problème](https://github.com/mathiasbunnens/chatgpt-quota-monitor/issues/new/choose)
+Quota Monitor est une petite application de bureau pour **macOS, Windows et Linux**. Elle lit localement les limites de ton abonnement **ChatGPT (Codex)** et **Claude (Claude Code)** et affiche ce qu’il reste, sans page web ouverte ni extension.
+
+[Télécharger la dernière version](https://github.com/mathiasbunnens/quota-monitor/releases/latest) · [Guide d’installation](docs/INSTALLATION.md) · [Compatibilité](docs/PLATFORMS.md) · [Signaler un problème](https://github.com/mathiasbunnens/quota-monitor/issues/new/choose)
+
+## Nouveautés de la 3.0
+
+- **Claude** rejoint Codex : limites 5 heures et hebdomadaire, abonnement (Pro, Max…) et usage supplémentaire.
+- **Le menu est le tableau de bord** sur macOS : une carte par fournisseur, toutes les limites, le temps restant (« Limite sur 1h38 », « Limite sur 5j 12h ») et l’heure de réinitialisation. Il se met à jour même lorsqu’il reste ouvert.
+- **Indicateur empilé** : avec les deux fournisseurs, la barre des menus affiche « Codex » et « Claude » l’un au-dessus de l’autre, sur la limite 5 heures.
+- **Nouvelle fenêtre Réglages** : activation par fournisseur, état « Connecté », réinitialisations Codex en un clic (icône et nombre restant), liens vers l’usage détaillé, fenêtre ajustée à son contenu.
+- Le dépôt s’appelle désormais **quota-monitor** (anciennement chatgpt-quota-monitor) ; les anciennes installations reçoivent quand même la mise à jour.
 
 ## Ce que l’application affiche
 
-- le quota glissant de **5 heures** ;
-- le quota **hebdomadaire** ;
-- l’heure ou la date de réinitialisation de chaque limite ;
-- une barre de progression verte, orange puis rouge à mesure que le quota diminue ;
-- la réserve **Luna**, uniquement lorsqu’elle est réellement fournie par Codex et que le quota de 5 heures est épuisé.
+Pour chaque fournisseur activé, dans le même ordre et avec les mêmes libellés :
 
-Le quota hebdomadaire reste visible dès lors qu’il est fourni par Codex. Lorsque le quota de 5 heures atteint `0 %`, cette ligne disparaît et la réserve Luna prend sa place si elle est disponible. Quota Monitor n’invente jamais une limite absente de la réponse de Codex.
+- la limite glissante de **5 heures**, puis la limite **hebdomadaire** ;
+- le pourcentage restant, une barre verte, orange puis rouge et le temps restant avant réinitialisation ;
+- pour Codex Plus, la **réserve** lorsqu’elle est réellement fournie ;
+- les erreurs de lecture, visibles sur la carte concernée sans masquer l’autre fournisseur.
+
+Une limite absente de la réponse n’est jamais inventée.
 
 ## Fonctionnement
 
-Quota Monitor utilise directement **Codex App Server** pour consulter les quotas :
+- **Codex** : Quota Monitor démarre `codex app-server` et lit `account/rateLimits/read`. Codex réutilise la connexion ChatGPT existante ou propose de se connecter.
+- **Claude** : Quota Monitor lance le CLI officiel Claude Code en mode protocole (`get_usage`), sans prompt ni requête de modèle. Connecte-toi une fois avec `claude auth login`.
 
-1. l’application détecte une installation compatible de Codex ;
-2. Codex réutilise la connexion ChatGPT déjà présente, ou propose une connexion si nécessaire ;
-3. Quota Monitor demande l’état du compte et les fenêtres de quota ;
-4. les valeurs sont actualisées automatiquement en arrière-plan.
-
-Il n’y a **aucune extension navigateur**, aucun cookie copié et aucun serveur HTTP local. La page d’utilisation Codex peut être ouverte pour consulter les détails, mais elle n’a pas besoin de rester ouverte.
-
-La consommation d’une réinitialisation supplémentaire est une action distincte, disponible uniquement après confirmation explicite dans l’application.
+Aucune extension, aucun cookie copié, aucun serveur local. La fréquence de lecture s’adapte à l’activité (ou à l’intervalle choisi) et chaque ouverture du menu déclenche une lecture immédiate.
 
 ## Installation rapide
 
-Télécharge le paquet correspondant à ton système depuis la [dernière release GitHub](https://github.com/mathiasbunnens/chatgpt-quota-monitor/releases/latest).
-
 | Système | Installation | Comportement |
 | --- | --- | --- |
-| macOS | Ouvre le `.dmg`, puis glisse **Quota Monitor** dans **Applications**. | L’application reste uniquement dans la barre des menus. |
-| Windows | Lance le fichier `*-setup.exe`. | Le tableau de bord et l’icône de notification restent disponibles. |
-| Linux Debian/Ubuntu | Installe le `.deb` avec `sudo apt install ./nom-du-paquet.deb`. | Le tableau de bord fonctionne même sans zone de notification. |
-| Linux AppImage | Rends l’AppImage exécutable, puis lance-le. | FUSE peut être nécessaire selon la distribution. |
+| macOS | Ouvre le `.dmg`, puis glisse **Quota Monitor** dans **Applications**. | Barre des menus uniquement, plus la fenêtre Réglages. |
+| Windows | Lance le fichier `*-setup.exe`. | Tableau de bord et icône de notification. |
+| Linux Debian/Ubuntu | `sudo apt install ./nom-du-paquet.deb` | Le tableau de bord fonctionne même sans zone de notification. |
+| Linux AppImage | Rends l’AppImage exécutable, puis lance-le. | FUSE peut être nécessaire. |
 
 Au premier lancement :
 
-1. vérifie que Codex est installé ; sur macOS, Quota Monitor détecte aussi le binaire intégré à l’application **ChatGPT** ;
-2. ouvre **Connexion** si aucun compte ChatGPT n’est encore associé à Codex ;
-3. termine l’autorisation dans le navigateur ;
-4. reviens dans Quota Monitor : les limites apparaissent automatiquement.
+1. **Codex** : installe Codex CLI (ou l’app ChatGPT sur macOS) ; utilise **Se connecter à Codex…** si aucun compte n’est associé.
+2. **Claude** : installe Claude Code, lance `claude auth login`, puis active Claude dans **Réglages → Fournisseurs**.
+3. Choisis dans **Réglages → Barre des menus** ce qui s’affiche à côté de l’icône : Codex, Claude ou les deux.
 
-Une clé API seule ne donne pas accès aux quotas d’un abonnement ChatGPT. La connexion doit être effectuée avec le compte ChatGPT concerné.
+Une clé API seule ne donne pas accès aux quotas d’un abonnement : connecte-toi avec le compte ChatGPT ou claude.ai concerné.
 
 > Le paquet macOS n’est pas signé avec un certificat Apple. Si macOS bloque le premier lancement, fais un clic droit sur **Quota Monitor** dans Applications, choisis **Ouvrir**, puis confirme.
 
-Le [guide d’installation détaillé](docs/INSTALLATION.md) couvre aussi les chemins personnalisés, le code de connexion et les problèmes fréquents.
+Le [guide d’installation](docs/INSTALLATION.md) détaille les chemins personnalisés, la connexion par code et le démarrage automatique sous Windows.
 
-## Une interface adaptée à chaque système
+## Réinitialisations et usage supplémentaire
 
-### macOS
-
-Quota Monitor est une application **menu-bar only** : aucune fenêtre principale ne s’ouvre. Un clic sur l’icône affiche les quotas et déclenche immédiatement leur actualisation. L’entrée **Connexion** disparaît dès que le compte est prêt.
-
-### Windows
-
-Le tableau de bord donne accès aux quotas, à la connexion et aux réglages d’actualisation. Fermer la fenêtre la masque lorsque l’icône de notification est disponible ; l’action **Quitter** arrête réellement l’application.
-
-L’installeur propose le lancement à l’ouverture de session, activé par défaut pour une première installation et désactivable. Ce lancement automatique reste dans la zone de notification sans ouvrir de fenêtre. Les détails et options silencieuses figurent dans le [guide d’installation](docs/INSTALLATION.md#démarrage-automatique-sous-windows).
-
-### Linux
-
-Le tableau de bord reste la référence, car toutes les interfaces de bureau ne proposent pas une zone de notification compatible. Pour conserver le suivi actif, minimise la fenêtre au lieu de la fermer.
-
-## Actualisation intelligente
-
-L’application adapte sa fréquence d’actualisation au plan et au nombre estimé d’instances Codex ouvertes :
-
-- au repos : toutes les 5 minutes ;
-- Plus, Pro, Team, Business, Enterprise ou Edu : 60 secondes avec une instance, 30 secondes avec 2–3, puis 15 secondes avec 4 ou plus ;
-- Free ou plan inconnu : 120, 60 puis 30 secondes selon l’activité.
-
-Windows et Linux permettent aussi de choisir un intervalle fixe entre 30 secondes et 10 minutes. En cas d’erreur, les anciennes valeurs sont retirées et une nouvelle tentative est planifiée avec temporisation.
+- **Codex** : le nombre de réinitialisations disponibles apparaît à côté de Codex dans les Réglages. Un clic demande confirmation, utilise une réinitialisation (sans achat) puis relit les quotas ; une réponse incertaine réutilise la même demande pour éviter une double consommation.
+- **Claude** : pas de réinitialisation manuelle. L’indicateur **Extra** signale l’usage supplémentaire payant lorsqu’il est activé, géré sur claude.ai.
 
 ## Mises à jour
 
-Quota Monitor vérifie les nouvelles versions publiées sur GitHub. Lorsqu’une mise à jour est disponible, une seule popup accompagne tout le parcours :
-
-1. recherche de la nouvelle version ;
-2. téléchargement avec progression ;
-3. installation ;
-4. bouton **Quitter et relancer**.
-
-Le bouton **Fermer** masque uniquement cette popup et laisse Quota Monitor actif. Les artefacts de mise à jour sont signés et vérifiés par l’application.
+Quota Monitor vérifie les nouvelles versions publiées ici. Une seule fenêtre accompagne la recherche, le téléchargement, l’installation puis **Quitter et relancer**. Les artefacts de mise à jour sont signés et vérifiés.
 
 ## Confidentialité et sécurité
 
-- aucune conversation et aucune tâche d’agent ne sont créées ;
-- aucun mot de passe, cookie ou jeton ChatGPT n’est exposé au frontend ;
-- Codex conserve et renouvelle lui-même sa session ;
-- aucun quota n’est envoyé vers un serveur géré par ce projet ;
-- la détection d’activité s’appuie uniquement sur les métadonnées locales des processus du même utilisateur ;
-- le code source et la configuration de publication sont disponibles dans ce dépôt.
+- aucune conversation, tâche d’agent ou requête de modèle n’est créée ;
+- aucun mot de passe, cookie ou jeton n’est lu ni exposé au frontend : Codex et Claude Code gèrent eux-mêmes leur session ;
+- de la réponse Claude, seuls les pourcentages, les dates de réinitialisation, l’abonnement et l’état de l’usage supplémentaire sont conservés, en mémoire ;
+- aucun quota n’est envoyé vers un serveur géré par ce projet.
 
-Voir également le [rapport de sécurité](docs/SECURITY_REVIEW.md) et la [politique de sécurité](SECURITY.md).
+Voir le [rapport de sécurité](docs/SECURITY_REVIEW.md), la [politique de sécurité](SECURITY.md) et les [détails du fournisseur Claude](docs/claude-provider.md).
 
 ## Dépannage rapide
 
-**Codex est introuvable**  
-Installe Codex CLI ou indique le chemin complet de son exécutable. Sur macOS, l’application ChatGPT officielle est également détectée. Sous Windows, sélectionne le véritable fichier `codex.exe`, pas un script `.cmd`.
+**Codex est introuvable** : installe Codex CLI ou indique le chemin de l’exécutable dans Réglages → Fournisseurs → Codex (›). Sous Windows, choisis `codex.exe`.
 
-**Le bouton Connexion reste affiché**  
-Vérifie que Codex utilise bien une connexion ChatGPT. Une authentification par clé API ne fournit pas les quotas de l’abonnement.
+**Claude affiche une erreur** : vérifie `claude auth login` (compte claude.ai) et mets Claude Code à jour ; `get_usage` est un protocole expérimental testé avec Claude Code 2.1.299.
 
-**Les quotas ne s’affichent pas**  
-Vérifie la connexion Internet, mets Codex à jour, puis rouvre le menu ou relance l’application. Les limites non renvoyées par Codex ne sont pas fabriquées.
+**Les quotas ne s’affichent pas** : vérifie la connexion Internet, puis rouvre le menu pour forcer une lecture.
 
-**L’icône Linux n’apparaît pas**  
-Certaines interfaces de bureau n’hébergent pas les AppIndicators. Le tableau de bord continue de fonctionner normalement.
-
-Pour aller plus loin, consulte [INSTALLATION.md](docs/INSTALLATION.md) et [PLATFORMS.md](docs/PLATFORMS.md).
+**L’icône Linux n’apparaît pas** : certaines interfaces n’hébergent pas les AppIndicators ; le tableau de bord continue de fonctionner.
 
 ## Développement
 
@@ -134,10 +103,6 @@ npm ci
 npm run tauri dev
 ```
 
-Les réinitialisations supplémentaires sont affichées lorsque Codex fournit leur nombre. Le bouton de confirmation utilise une réinitialisation disponible, sans achat, puis relit les quotas. Une réponse inconnue conserve la même demande pour éviter une double consommation. Les crédits payants et l’éventuelle recharge automatique se gèrent sur la page officielle Codex : aucune programmation de paiement n’est exposée par l’interface utilisée. Nécessite une version de Codex prenant en charge [les réinitialisations de quota](https://learn.chatgpt.com/docs/app-server#8-earned-rate-limit-resets-chatgpt).
-
-Après une réinitialisation, la lecture des quotas est immédiate, sans attendre l’intervalle d’actualisation adaptatif. Dès la réponse de Codex, le tableau de bord et l’indicateur de la barre système sont actualisés sous Windows, Linux et macOS. Si cette lecture échoue après une réinitialisation confirmée, l’application signale l’échec d’actualisation sans proposer de réessayer la consommation.
-
 Vérifications locales :
 
 ```sh
@@ -145,13 +110,12 @@ npm run typecheck
 npm run build
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo test --locked --manifest-path src-tauri/Cargo.toml
-cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-Build de production sur le système courant :
+Rendu hors écran du vrai menu macOS (données de démonstration, clair et sombre) :
 
 ```sh
-npm run tauri build
+"Quota Monitor.app/Contents/MacOS/chatgpt-quota-monitor" --quota-ui-smoke /tmp/quota-ui
 ```
 
 Build macOS universel :
@@ -161,17 +125,15 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 npm run tauri build -- --target universal-apple-darwin
 ```
 
-Les builds de release sont générés sur macOS, Windows et Linux par [le workflow dédié](.github/workflows/release.yml). Les artefacts destinés à l’updater nécessitent la clé de signature du projet.
+Les releases macOS, Windows et Linux sont produites par [le workflow dédié](.github/workflows/release.yml) à chaque tag `v*` ; les artefacts de l’updater nécessitent la clé de signature du projet.
 
 ## Architecture
 
-- `src-tauri/src/codex.rs` : découverte de Codex, connexion et lecture du protocole App Server ;
-- `src-tauri/src/lib.rs` : sélection des quotas, menus natifs, fenêtres et mises à jour ;
-- `src-tauri/src/activity.rs` : estimation locale du nombre d’instances Codex ;
-- `src/` : tableau de bord Windows/Linux et popup de mise à jour ;
-- `.github/workflows/` : vérifications et publication multiplateforme.
-
-Les anciennes versions `1.x` utilisaient une extension Chromium. Elle n’est plus nécessaire et peut être supprimée du navigateur.
+- `src-tauri/src/codex.rs` : découverte de Codex, connexion et protocole App Server ;
+- `src-tauri/src/claude.rs`, `claude_cli.rs` : fournisseur Claude et protocole Claude Code ;
+- `src-tauri/src/lib.rs` : menu natif macOS, indicateur, fenêtres et mises à jour ;
+- `src-tauri/src/indicator.rs`, `prefs.rs` : choix de l’indicateur et préférences ;
+- `src/features/settings/` : fenêtre Réglages ; `src/pages/Dashboard/` : tableau de bord Windows/Linux.
 
 ## Contribuer
 

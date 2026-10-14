@@ -6,7 +6,7 @@ All platforms now use the same direct Codex App Server provider. There is no bro
 
 - Windows: a normal dashboard and tray menu. Left-click opens the dashboard; right-click shows actions. Closing hides the window when the tray is available. Quit exits and stops the owned Codex process.
 - Linux: the dashboard works without an AppIndicator host. Closing exits; minimize to keep monitoring. The tray menu can reopen the window where supported.
-- macOS: the app is menu-bar only. AppKit renders the returned quota windows dynamically, and a Connection item appears only while the account is disconnected. No dashboard window is created.
+- macOS: the app is menu-bar only. The AppKit menu shows one card per provider (Codex, Claude) with every limit, its time left and reset, and refreshes live while open; a Connection item appears only while Codex is disconnected. The only window is Settings. No dashboard window is created.
 
 The details action opens the Codex usage page in the default browser. Monitoring does not depend on that page.
 

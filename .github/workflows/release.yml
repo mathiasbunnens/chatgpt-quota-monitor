@@ -66,7 +66,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Quota Monitor ${{ github.ref_name }}
           releaseBody: |
-            Application macOS, Windows et Linux pour surveiller les quotas Codex.
+            Application macOS, Windows et Linux pour surveiller les quotas Codex et Claude.
 
             Consultez le guide d’installation inclus dans le dépôt avant le premier lancement.
           releaseDraft: false
