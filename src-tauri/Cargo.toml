@@ -1,6 +1,6 @@
 [package]
 name = "chatgpt-quota-monitor"
-version = "3.0.0"
+version = "3.0.1"
 description = "Desktop tray app for Codex usage quotas on macOS, Windows and Linux"
 authors = ["Mathias Bunnens"]
 edition = "2021"
@@ -24,6 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 chrono = { version = "0.4", features = ["clock"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

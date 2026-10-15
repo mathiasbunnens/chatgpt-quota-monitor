@@ -68,6 +68,10 @@ jobs:
           releaseBody: |
             Application macOS, Windows et Linux pour surveiller les quotas Codex et Claude.
 
+            Nouveauté 3.0.1 : alertes ntfy facultatives lorsque les quotas Codex ou Claude atteignent 100 % de consommation, avec bouton de test dans les Réglages.
+
+            Les alertes nécessitent que Quota Monitor reste ouverte et que les notifications ntfy soient activées. Choisissez un topic privé et imprévisible, non partagé publiquement.
+
             Consultez le guide d’installation inclus dans le dépôt avant le premier lancement.
           releaseDraft: false
           prerelease: false

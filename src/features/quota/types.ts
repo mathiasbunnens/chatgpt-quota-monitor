@@ -26,10 +26,12 @@ export type CodexStatus = {
 };
 
 export type IndicatorChoice = "codex" | "claude" | "both";
+export type NtfyConfig = { enabled: boolean; serverUrl: string; topic: string };
 export type Preferences = {
   codexEnabled: boolean;
   claudeEnabled: boolean;
   indicator: IndicatorChoice;
+  ntfy: NtfyConfig;
 };
 
 export type ClaudeMetric = {

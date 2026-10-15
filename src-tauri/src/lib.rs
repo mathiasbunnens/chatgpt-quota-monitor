@@ -3,6 +3,7 @@ mod claude;
 mod claude_cli;
 mod codex;
 mod indicator;
+mod ntfy;
 mod prefs;
 #[cfg(any(not(target_os = "macos"), test))]
 mod tray_percentage;
@@ -65,6 +66,8 @@ use objc2_foundation::{
 
 #[derive(Debug, Serialize, Clone)]
 struct QuotaPayload {
+    #[serde(skip)]
+    used_percent: Option<f64>,
     model: String,
     remaining: u32,
     limit: u32,
@@ -87,6 +90,7 @@ struct QuotaPayload {
 struct QuotaState(Mutex<Vec<QuotaPayload>>);
 
 fn publish_quotas(app: &tauri::AppHandle) {
+    ntfy::wake(app);
     render_native_menu(app);
     let _ = app.emit("quota-updated", ());
 }
@@ -1408,6 +1412,7 @@ fn demo_payload(
     minutes: Option<i64>,
 ) -> QuotaPayload {
     QuotaPayload {
+        used_percent: None,
         model: "codex".into(),
         remaining,
         limit: 100,
@@ -1862,6 +1867,7 @@ pub fn run() {
         .manage(UpdateState::default())
         .manage(prefs::PrefsState::default())
         .invoke_handler(tauri::generate_handler![
+            ntfy::test_ntfy,
             get_platform,
             get_quota_snapshots,
             request_quota_refresh,
@@ -1891,6 +1897,7 @@ pub fn run() {
         ])
         .setup(|app| {
             *app.state::<prefs::PrefsState>().0.lock().unwrap() = prefs::load(app.handle());
+            ntfy::start(app.handle().clone());
             #[cfg(target_os = "macos")]
             let _ = APP_HANDLE.set(app.handle().clone());
 
@@ -2032,6 +2039,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn payload(period: &str, remaining: u32, minutes: Option<i64>) -> QuotaPayload {
         QuotaPayload {
+            used_percent: None,
             model: "codex".into(),
             remaining,
             limit: 100,
