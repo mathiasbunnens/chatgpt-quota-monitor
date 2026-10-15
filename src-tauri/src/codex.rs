@@ -466,6 +466,7 @@ pub fn normalize(result: &Value) -> Result<Vec<QuotaPayload>, String> {
                 .map(|d| d.to_rfc3339())
                 .unwrap_or_default();
             snapshots.push(QuotaPayload {
+                used_percent: Some(used),
                 model: name.into(),
                 remaining: (100.0 - used.clamp(0.0, 100.0)).round() as u32,
                 limit: 100,

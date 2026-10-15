@@ -16,6 +16,9 @@ html:has(.prefs), html:has(.prefs) body { background: var(--desktop-bg); }
   select, input:not([type="checkbox"]):not([type="radio"]) { display: block; width: 100%; padding: 5px 8px; margin: 6px 0; border: 1px solid var(--desktop-border); border-radius: 7px; background: var(--desktop-card); color: var(--desktop-ink); font: inherit; font-size: 12px; }
 }
 .prefs-loading { padding: 24px; }
+.ntfy-fields { border: 0; padding: 0; margin: 12px 0; min-width: 0; }
+.ntfy-fields > label { display: block; margin: 10px 0; }
+.prefs #ntfy-heading { font-size: 13px; margin: 0 0 8px; }
 
 // Toolbar tabs: icon above label, like a native Settings scene.
 .prefs-toolbar {

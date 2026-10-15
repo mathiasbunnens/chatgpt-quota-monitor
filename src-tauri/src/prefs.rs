@@ -14,6 +14,7 @@ pub struct Prefs {
     pub claude_enabled: bool,
     /// Menu-bar indicator: "codex", "claude" or "both".
     pub indicator: String,
+    pub ntfy: crate::ntfy::Config,
 }
 
 impl Default for Prefs {
@@ -22,6 +23,7 @@ impl Default for Prefs {
             codex_enabled: true,
             claude_enabled: false,
             indicator: "codex".into(),
+            ntfy: crate::ntfy::Config::default(),
         }
     }
 }
@@ -75,6 +77,7 @@ pub fn set_preferences(app: tauri::AppHandle, prefs: Prefs) -> Result<Prefs, Str
         return Err("Indicateur de barre des menus non pris en charge.".into());
     }
     let file = path(&app)?;
+    prefs.ntfy.validate()?;
     if let Some(dir) = file.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -129,6 +132,7 @@ mod tests {
             codex_enabled: false,
             claude_enabled: true,
             indicator: "both".into(),
+            ntfy: crate::ntfy::Config::default(),
         };
         let bytes = serde_json::to_vec(&saved).unwrap();
         assert_eq!(parse(&bytes), saved);

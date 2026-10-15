@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import ExternalIcon from "../ui/ExternalIcon";
 import CodexConnection from "../setup/CodexConnection";
 import RefreshSettings from "../setup/RefreshSettings";
+import NtfySettings from "./NtfySettings";
 import ResetCredits from "../quota/ResetCredits";
 import type { ClaudeSnapshot, CodexStatus, IndicatorChoice, Preferences } from "../quota/types";
 import "../../pages/Dashboard/dashboard.scss";
@@ -12,6 +13,7 @@ import "./settings.scss";
 type Tone = "good" | "warning" | "error" | "neutral";
 
 const icons: Record<string, ReactNode> = {
+  notifications: <><path d="M6 16V10a6 6 0 0 1 12 0v6l2 2H4l2-2M10 21h4" /></>,
   providers: <path d="M4 6.5h16M4 12h16M4 17.5h10" />,
   menubar: <><rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M3 9h18M14 6.8h4" /></>,
   refresh: <><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4.2h-4.2" /></>,
@@ -21,6 +23,7 @@ const tabs = [
   { id: "providers", label: "Fournisseurs" },
   { id: "menubar", label: "Barre des menus" },
   { id: "refresh", label: "Actualisation" },
+  { id: "notifications", label: "Notifications" },
 ] as const;
 type TabId = (typeof tabs)[number]["id"];
 
@@ -151,10 +154,10 @@ export default function Settings() {
   }, [revision]);
 
   const update = async (patch: Partial<Preferences>) => {
-    if (!prefs) return;
+    if (!prefs) return false;
     setError(null); setBusy(true);
-    try { setPrefs(await invoke<Preferences>("set_preferences", { prefs: { ...prefs, ...patch } })); reload(); }
-    catch (cause) { setError(String(cause)); }
+    try { setPrefs(await invoke<Preferences>("set_preferences", { prefs: { ...prefs, ...patch } })); reload(); return true; }
+    catch (cause) { setError(String(cause)); return false; }
     finally { setBusy(false); }
   };
   const relay = async (command: "install_claude_relay" | "uninstall_claude_relay") => {
@@ -194,6 +197,9 @@ export default function Settings() {
 
     <div className="prefs-body">
       {error && <p className="prefs-alert" role="alert">{error}</p>}
+      {tab === "notifications" && <div role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications">
+        <NtfySettings config={prefs.ntfy} onSave={(ntfy) => update({ ntfy })} />
+      </div>}
 
       {tab === "providers" && <div role="tabpanel" id="panel-providers" aria-labelledby="tab-providers">
         <section className="prefs-group" aria-labelledby="codex-heading">

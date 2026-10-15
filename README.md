@@ -37,9 +37,32 @@ Le paquet macOS n’est pas notarisé : au premier lancement, clic droit sur l�
 3. Dans **Réglages → Barre des menus**, choisissez Codex, Claude ou les deux.
 
 ## Vos comptes restent protégés
+### Notifications téléphone (optionnelles)
+
+Dans **Réglages → Notifications**, renseignez l’URL du serveur (`https://ntfy.sh`
+par défaut, ou votre serveur ntfy) et un topic long, aléatoire et imprévisible.
+Installez ntfy sur le téléphone, abonnez-vous au même topic sur le même serveur et
+autorisez les notifications. **Envoyer un test** utilise les champs sans les
+enregistrer et indique si le serveur a accepté le POST, pas si le téléphone l’a reçu.
+Cochez les alertes automatiques puis **Enregistrer** ; elles sont désactivées par défaut.
+Sans authentification, toute personne connaissant le topic peut lire et publier :
+ne partagez pas ce nom. Aucun jeton ntfy n’est pris en charge ; préférez HTTPS.
+
+L’application doit rester ouverte et connectée. Seuls le fournisseur, la fenêtre,
+le seuil atteint et la date de réinitialisation connue sont transmis (aucun compte,
+abonnement ou secret). Les données inconnues, en erreur, expirées ou de plus de
+deux minutes sont ignorées. Une première observation déjà épuisée déclenche aussi
+une alerte. Une seule tentative par fournisseur/fenêtre/cycle est enregistrée dans
+`ntfy-attempts.json` avant l’envoi, y compris si le réseau échoue : pas de spam ni
+de répétition après redémarrage, mais une interruption peut perdre une alerte.
+Un retour sous 100 % consommé ou une nouvelle date de reset réarme la fenêtre.
+Changer de destination ou désactiver/réactiver ne rejoue pas les alertes déjà tentées.
+Les réglages sont conservés dans `prefs.json` dans le dossier local de l’application.
+
+### Confidentialité
 
 - Aucune conversation ni requête de modèle n’est créée ; Codex et Claude Code gèrent eux-mêmes leur connexion.
-- Aucun mot de passe, cookie ou jeton n’est lu ; seuls les pourcentages, réinitialisations et l’abonnement sont conservés, en mémoire.
+- Aucun mot de passe, cookie ou jeton n’est lu ; les quotas et l’abonnement restent en mémoire, hormis l’état minimal de dédoublonnage des notifications optionnelles.
 - Aucun quota n’est envoyé vers un serveur de ce projet.
 
 ## Pour aller plus loin
