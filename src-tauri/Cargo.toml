@@ -33,11 +33,7 @@ objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
-tauri-plugin-updater = {
-    version = "2.12.0",
-    default-features = false,
-    features = ["rustls-tls"]
-}
+tauri-plugin-updater = { version = "2.12.0", default-features = false, features = ["rustls-tls"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
