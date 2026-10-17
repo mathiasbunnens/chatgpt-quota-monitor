@@ -61,8 +61,7 @@ export default function Dashboard() {
   }, [revision]);
 
   const codexOn = prefs?.codexEnabled ?? true;
-  const claudeOn = !!prefs?.claudeEnabled && !!claude && claude.enabled
-    && claude.state !== "disabled" && claude.state !== "not_configured";
+  const claudeOn = !!prefs?.claudeEnabled && !!claude && claude.enabled;
 
   const refresh = async () => {
     setRefreshing(true); setError(null);

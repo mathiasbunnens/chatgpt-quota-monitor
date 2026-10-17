@@ -857,7 +857,7 @@ fn claude_panel(snapshot: &claude::ClaudeSnapshot) -> PanelProvider {
         })
         .collect();
     let note = match snapshot.state {
-        "error" | "unavailable" | "auth_required" => Some((
+        "not_configured" | "error" | "unavailable" | "auth_required" => Some((
             non_empty(
                 &snapshot.message,
                 "Lecture impossible : vérifiez Claude Code.",
@@ -1304,7 +1304,7 @@ fn remaining_percent(used: f64) -> u32 {
 }
 
 fn claude_is_visible(snapshot: &claude::ClaudeSnapshot) -> bool {
-    !matches!(snapshot.state, "disabled" | "not_configured")
+    snapshot.enabled
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -1312,6 +1312,7 @@ fn claude_status_line(state: &str) -> Option<&'static str> {
     match state {
         "waiting_for_data" => Some("Claude : en attente de Claude Code…"),
         "stale" => Some("Claude : données anciennes"),
+        "not_configured" => Some("Claude : programme introuvable"),
         "error" | "unavailable" | "auth_required" => Some("Claude : erreur de lecture"),
         _ => None,
     }
@@ -1344,7 +1345,10 @@ fn claude_display(snapshot: &claude::ClaudeSnapshot) -> Option<indicator::Displa
     if !claude_is_visible(snapshot) {
         return None;
     }
-    if matches!(snapshot.state, "error" | "unavailable" | "auth_required") {
+    if matches!(
+        snapshot.state,
+        "not_configured" | "error" | "unavailable" | "auth_required"
+    ) {
         return Some(indicator::Display::Error);
     }
     let short = snapshot
@@ -1754,6 +1758,14 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
         )?)?;
     }
     if claude_is_visible(&claude_snap) {
+        if claude_snap.metrics.is_empty() {
+            menu.append(&MenuItem::new(
+                app,
+                format!("Claude · {}", claude_snap.message),
+                false,
+                None::<&str>,
+            )?)?;
+        }
         for m in &claude_snap.metrics {
             let text = match (m.availability, m.used_percent) {
                 ("available", Some(_)) if m.exhausted => "épuisé".to_string(),
@@ -2131,6 +2143,15 @@ mod tests {
             PANEL_ROW_HEIGHT
         );
         assert!(panel_height(&[two.clone(), two]) > PANEL_HEADER_HEIGHT * 2.0);
+    }
+
+    #[test]
+    fn enabled_claude_remains_visible_when_binary_is_missing() {
+        let missing = claude::compute(true, false, claude::FileState::Missing, 1_700_000_000);
+        assert_eq!(missing.state, "not_configured");
+        assert!(claude_is_visible(&missing));
+        let off = claude::compute(false, false, claude::FileState::Missing, 1_700_000_000);
+        assert!(!claude_is_visible(&off));
     }
 
     #[test]

@@ -8,24 +8,107 @@ use std::{
     time::Duration,
 };
 
-pub fn discover() -> Option<PathBuf> {
+/// Find Claude Code even when a GUI-launched process lacks the shell PATH.
+fn candidates(
+    home: Option<&Path>,
+    search_path: Option<&std::ffi::OsStr>,
+    override_path: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Some(path) = std::env::var_os("QUOTA_CLAUDE_BINARY") {
-        paths.push(PathBuf::from(path));
+    let name = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
+    if let Some(path) = override_path {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            paths.push(path);
+        }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        paths.push(PathBuf::from(home).join(".local/bin/claude"));
+    if let Some(home) = home {
+        paths.push(home.join(".local/bin").join(name));
+        #[cfg(not(windows))]
+        {
+            for directory in [
+                ".volta/bin",
+                ".asdf/shims",
+                ".local/share/mise/shims",
+                ".bun/bin",
+                ".npm-global/bin",
+            ] {
+                paths.push(home.join(directory).join(name));
+            }
+            // nvm/fnm directories are usually set only by interactive shells.
+            for (root, bin) in [
+                (".nvm/versions/node", "bin"),
+                (".fnm/node-versions", "installation/bin"),
+            ] {
+                if let Ok(versions) = std::fs::read_dir(home.join(root)) {
+                    let mut versions: Vec<_> = versions.flatten().map(|v| v.path()).collect();
+                    versions.sort();
+                    for version in versions.into_iter().rev() {
+                        paths.push(version.join(bin).join(name));
+                    }
+                }
+            }
+        }
     }
-    if let Some(path) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&path).map(|p| p.join("claude")));
+    if let Some(search_path) = search_path {
+        paths.extend(
+            std::env::split_paths(search_path)
+                .filter(|p| p.is_absolute())
+                .map(|p| p.join(name)),
+        );
     }
-    paths.extend(["/opt/homebrew/bin/claude", "/usr/local/bin/claude"].map(PathBuf::from));
-    paths.into_iter().find(|p| p.is_file())
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local).join("Programs/Claude/claude.exe"));
+    }
+    #[cfg(not(windows))]
+    paths.extend(
+        [
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+            "/usr/bin/claude",
+        ]
+        .map(PathBuf::from),
+    );
+    paths
 }
 
+pub fn discover() -> Option<PathBuf> {
+    let home = if cfg!(windows) {
+        std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+    } else {
+        std::env::var_os("HOME")
+    }
+    .map(PathBuf::from)
+    .filter(|p| p.is_absolute());
+    let path = std::env::var_os("PATH");
+    let override_path = std::env::var_os("QUOTA_CLAUDE_BINARY");
+    candidates(home.as_deref(), path.as_deref(), override_path.as_deref())
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// Preserve the Node runtime co-located with an npm/nvm launcher.
+fn claude_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
+    if let Some(bin) = executable.parent() {
+        let mut paths = vec![bin.to_path_buf()];
+        if let Some(existing) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(path) = std::env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
+    command
+}
 pub fn read_usage(executable: &Path, cwd: &Path) -> Result<Value, &'static str> {
     std::fs::create_dir_all(cwd).map_err(|_| "workspace")?;
-    let mut child = Command::new(executable)
+    let mut child = claude_command(executable)
         .args([
             "--safe-mode",
             "--strict-mcp-config",
@@ -129,6 +212,57 @@ pub fn window(value: &Value) -> Option<crate::claude::Window> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn gui_without_shell_path_still_discovers_nvm_and_fnm() {
+        let dir = std::env::temp_dir().join(format!("qm-claude-discover-{}", std::process::id()));
+        let nvm = dir.join(".nvm/versions/node/v22.5.0/bin/claude");
+        let fnm = dir.join(".fnm/node-versions/v23.1.0/installation/bin/claude");
+        std::fs::create_dir_all(nvm.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(fnm.parent().unwrap()).unwrap();
+        std::fs::write(&nvm, b"").unwrap();
+        std::fs::write(&fnm, b"").unwrap();
+        let found = candidates(Some(&dir), None, None);
+        assert!(found.contains(&nvm));
+        assert!(found.contains(&fnm));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_install_uses_exe_suffix() {
+        let home = Path::new(r"C:\Users\test");
+        let found = candidates(Some(home), None, None);
+        assert!(found.contains(&home.join(".local/bin/claude.exe")));
+        assert!(!found.contains(&home.join(".local/bin/claude")));
+    }
+
+    #[test]
+    fn explicit_binary_has_priority() {
+        let path = std::env::current_dir().unwrap().join("custom-claude");
+        let found = candidates(None, None, Some(path.as_os_str()));
+        assert_eq!(found.first(), Some(&path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gui_launch_finds_sibling_interpreter() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("qm-claude-launch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let interpreter = dir.join("qm-fake-node");
+        let claude = dir.join("claude");
+        std::fs::write(&interpreter, "#!/bin/sh\nexec /bin/sh \"$@\"\n").unwrap();
+        std::fs::write(&claude, "#!/usr/bin/env qm-fake-node\nprintf 'running'\n").unwrap();
+        for executable in [&interpreter, &claude] {
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let result = claude_command(&claude).output().unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout.as_slice(), b"running");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn structured_windows_preserve_zero_absence_and_reset() {
         assert_eq!(
