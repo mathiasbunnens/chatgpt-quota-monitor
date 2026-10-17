@@ -8,6 +8,27 @@ Installer Claude Code et exécuter `claude auth login` dans son terminal. Dans Q
 
 Réglages → Barre des menus : Codex, Claude ou les deux. Chaque fournisseur conserve son état et ses erreurs. Sur macOS, l’application se limite au menu de la barre des menus et à la fenêtre Réglages : le menu affiche un en-tête d’état (À jour, Lecture…, Erreur) puis une carte par fournisseur actif avec toutes ses limites (5 heures, hebdomadaire, réserve), leur réinitialisation et les erreurs. Les deux fournisseurs utilisent les mêmes libellés et le même ordre : la limite courte puis la limite hebdomadaire, nommées par le temps restant avant réinitialisation (« Limite sur 1h38 », « Limite sur 7j2h ») ; l’abonnement (Plus, Pro…) s’affiche à côté du nom. Avec « Les deux », l’indicateur de la barre des menus empile « Codex » et « Claude » sur deux lignes, toujours sur la limite 5 heures. Il n’y a plus de fenêtre de détails : les liens d’usage détaillé (chatgpt.com, claude.ai), les réinitialisations Codex (icône et nombre restant, dans l’en-tête Codex) et l’usage supplémentaire Claude (indicateur « Extra » lorsqu’il est activé) se trouvent dans Réglages → Fournisseurs, fenêtre qui s’ajuste à son contenu.
 
+## Dépannage Claude Code (macOS / Windows)
+
+Quota Monitor doit retrouver le binaire Claude Code **et** lancer son protocole
+`get_usage`. `claude auth login` seul ne suffit pas si le programme est introuvable.
+
+- macOS : vérifiez `command -v claude`, `claude --version` et
+  `claude auth status`. Les installations natives, Homebrew, nvm, fnm,
+  Volta et asdf sont recherchées même lorsque Finder ne transmet pas le PATH
+  du terminal. Le chemin de l'exécutable est ajouté en tête du PATH du
+  sous-processus (utile pour un lanceur Node.js).
+- Windows : la détection recherche désormais `claude.exe`, en particulier
+  `%USERPROFILE%\.local\bin\claude.exe`. Les anciens lanceurs
+  `claude.cmd` installés via npm ne sont pas pris en charge ici : préférez
+  l'installation native.
+- Si besoin, `QUOTA_CLAUDE_BINARY` accepte un chemin **absolu** vers
+  l'exécutable ; il doit être présent dans l'environnement de Quota Monitor
+  au lancement, et pas seulement dans celui du terminal.
+- Claude reste affiché lorsqu'il est activé mais introuvable. Une erreur
+  `get_usage` après détection peut signaler une incompatibilité de version
+  ou une session API plutôt que l'absence de connexion à claude.ai.
+
 ## Transport
 
 Codex : `codex app-server`, `account/rateLimits/read`.

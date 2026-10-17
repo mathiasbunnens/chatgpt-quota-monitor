@@ -61,6 +61,7 @@ export function claudeRows(snapshot: ClaudeSnapshot): QuotaRow[] {
 
 export function claudeStatusText(snapshot: ClaudeSnapshot): string | null {
   switch (snapshot.state) {
+    case "not_configured": return snapshot.message || "Claude Code introuvable.";
     case "waiting_for_data": return "En attente de Claude Code : les limites apparaissent après la première réponse d’une session.";
     case "stale": return snapshot.observedAt
       ? "Dernière observation : " + new Date(snapshot.observedAt).toLocaleTimeString("fr-FR") + ". Claude Code n’a rien envoyé récemment."

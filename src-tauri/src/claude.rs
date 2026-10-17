@@ -302,7 +302,9 @@ pub fn compute(enabled: bool, configured: bool, file: FileState, now: i64) -> Cl
     }
     if !configured {
         snap.state = "not_configured";
-        snap.message = "Le relais Claude Code n’est pas installé.".into();
+        snap.message =
+            "Claude Code introuvable. Vérifiez son installation et redémarrez Quota Monitor."
+                .into();
         return snap;
     }
     let data = match file {
@@ -479,7 +481,9 @@ pub fn snapshot(app: &tauri::AppHandle) -> ClaudeSnapshot {
         snap.state = "disabled";
         snap.metrics.clear();
     } else if !snap.configured {
-        snap.message = "Installez Claude Code et connectez-vous avec claude auth login.".into();
+        snap.message =
+            "Claude Code introuvable. Vérifiez son installation et redémarrez Quota Monitor."
+                .into();
     } else if snap.observed_at.is_none() && snap.error_kind.is_none() {
         snap.message = "Lecture des quotas via Claude Code…".into();
     }
@@ -489,6 +493,12 @@ pub fn snapshot(app: &tauri::AppHandle) -> ClaudeSnapshot {
 fn refresh_live(app: &tauri::AppHandle) {
     let generation = GENERATION.load(Ordering::Acquire);
     let Some(executable) = crate::claude_cli::discover() else {
+        // Do not silently return: surface the missing executable even if a
+        // previous successful refresh left cached data in LIVE.
+        if generation == GENERATION.load(Ordering::Acquire) && prefs::current(app).claude_enabled {
+            *LIVE.lock().unwrap() = Some(compute(true, false, FileState::Missing, unix_now()));
+            crate::publish_quotas(app);
+        }
         return;
     };
     let Ok(dir) = data_dir(app) else {
